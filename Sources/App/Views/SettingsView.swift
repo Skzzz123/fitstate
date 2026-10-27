@@ -225,6 +225,28 @@ struct SettingsView: View {
             .padding(.top, 4)
 
             HStack {
+                Text("共享容器")
+                    .font(.system(size: 12, design: .monospaced))
+                    .foregroundStyle(Theme.muted)
+                Spacer()
+                Text(AppGroup.isAvailable ? "可用" : "不可用（小组件无数据）")
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundStyle(AppGroup.isAvailable ? Theme.primary : Theme.rose)
+            }
+
+            HStack {
+                Text("Bundle ID")
+                    .font(.system(size: 12, design: .monospaced))
+                    .foregroundStyle(Theme.muted)
+                Spacer()
+                Text(Bundle.main.bundleIdentifier ?? "-")
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundStyle(Theme.muted)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+
+            HStack {
                 Text("版本")
                     .font(.system(size: 12, design: .monospaced))
                     .foregroundStyle(Theme.muted)

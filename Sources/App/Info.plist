@@ -60,7 +60,7 @@
 	<key>NSHealthUpdateUsageDescription</key>
 	<string>状态 App 只读取健康数据，不会写入任何内容。</string>
 	<key>AppGroupIdentifier</key>
-	<string>$(APP_GROUP_ID)</string>
+	<string>$(APP_GROUP_RUNTIME_ID)</string>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 </dict>

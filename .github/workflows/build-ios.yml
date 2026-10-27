@@ -5,7 +5,11 @@ on:
   workflow_dispatch:
     inputs:
       app_group_id:
-        description: 'App Group ID（形如 group.<你的TeamID>.com.god.fitstate）'
+        description: 'App Group ID（签名时向 Apple 声明的组，形如 group.com.god.fitstate）'
+        required: false
+        default: 'group.com.god.fitstate'
+      app_group_runtime_id:
+        description: '运行时使用的 App Group ID（形如 group.<你的TeamID>.com.god.fitstate）'
         required: false
         default: 'group.com.god.fitstate'
   push:
@@ -49,10 +53,13 @@ jobs:
       - name: Build
         env:
           APP_GROUP_ID: ${{ inputs.app_group_id || vars.APP_GROUP_ID || 'group.com.god.fitstate' }}
+          APP_GROUP_RUNTIME_ID: ${{ inputs.app_group_runtime_id || vars.APP_GROUP_RUNTIME_ID || 'group.com.god.fitstate' }}
         run: |
           set -euo pipefail
           export APP_GROUP_ID
+          export APP_GROUP_RUNTIME_ID
           echo "APP_GROUP_ID=$APP_GROUP_ID"
+          echo "APP_GROUP_RUNTIME_ID=$APP_GROUP_RUNTIME_ID"
 
           # 未签名构建。Xcode 26+ 禁止用 ad-hoc 身份签 iOS 设备包
           # （Ad Hoc code signing is not allowed with SDK 'iOS 26.2'），
@@ -66,6 +73,7 @@ jobs:
             -derivedDataPath build \
             -destination 'generic/platform=iOS' \
             APP_GROUP_ID="$APP_GROUP_ID" \
+            APP_GROUP_RUNTIME_ID="$APP_GROUP_RUNTIME_ID" \
             CODE_SIGN_IDENTITY="" \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=NO \
@@ -82,6 +90,15 @@ jobs:
             exit 1
           fi
           tail -5 build-unsigned.log || true
+
+          # 校验 Info.plist 里的运行时 App Group ID 真的被展开了
+          APP_PATH="build/Build/Products/Release-iphoneos/FitState.app"
+          RUNTIME_ID=$(/usr/libexec/PlistBuddy -c "Print :AppGroupIdentifier" "$APP_PATH/Info.plist")
+          echo "### 运行时 App Group ID = $RUNTIME_ID"
+          if [ -z "$RUNTIME_ID" ] || [[ "$RUNTIME_ID" == *'$('* ]]; then
+            echo "::error::Info.plist 的 AppGroupIdentifier 没有被正确展开：$RUNTIME_ID"
+            exit 1
+          fi
 
       - name: Verify and ad-hoc sign
         env:

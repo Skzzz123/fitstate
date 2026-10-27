@@ -26,6 +26,6 @@
 		<string>com.apple.widgetkit-extension</string>
 	</dict>
 	<key>AppGroupIdentifier</key>
-	<string>$(APP_GROUP_ID)</string>
+	<string>$(APP_GROUP_RUNTIME_ID)</string>
 </dict>
 </plist>

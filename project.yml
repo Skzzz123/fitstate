@@ -19,6 +19,10 @@ settings:
     # App Group 前缀必须带你的 Team ID，在 CI 里用 APP_GROUP_ID 覆盖：
     #   group.<你的TeamID>.com.god.fitstate
     APP_GROUP_ID: "group.com.god.fitstate"
+    # 运行时真正去查容器的 App Group ID。与 APP_GROUP_ID 分开：
+    # 签名工具会把工程里声明的组按「group.<TeamID> + 后缀」重新注册，
+    # 所以运行时要用带 Team ID 的完整值。
+    APP_GROUP_RUNTIME_ID: "group.com.god.fitstate"
     CODE_SIGN_STYLE: Manual
     DEVELOPMENT_TEAM: ""
     CODE_SIGN_IDENTITY: ""
