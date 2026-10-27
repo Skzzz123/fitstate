@@ -12,6 +12,10 @@ on:
         description: '运行时使用的 App Group ID（形如 group.<你的TeamID>.com.god.fitstate）'
         required: false
         default: 'group.com.god.fitstate'
+      team_id:
+        description: '你的 Team ID（10 位大写字母数字，免费个人团队从签名工具改写后的 bundle id 末段取）'
+        required: false
+        default: '97792VH57A'
   push:
     branches: [main]
     paths:
@@ -137,6 +141,68 @@ jobs:
           echo "### 嵌入的 entitlements："
           codesign -d --entitlements :- "$APP_PATH" || true
 
+      - name: Embed provisioning profile hint
+        env:
+          TEAM_ID: ${{ inputs.team_id || vars.TEAM_ID || '97792VH57A' }}
+          APP_GROUP_RUNTIME_ID: ${{ inputs.app_group_runtime_id || vars.APP_GROUP_RUNTIME_ID || 'group.com.god.fitstate' }}
+        run: |
+          set -euo pipefail
+          APP_PATH="build/Build/Products/Release-iphoneos/FitState.app"
+          mkdir -p build/profile
+
+          # Sideloadly 这类签名工具是靠 ipa 里的 embedded.mobileprovision 来判断
+          # 这个 app 需要哪些 capability（HealthKit / App Groups…），再去门户申请。
+          # 没有这个文件，它只会建一个裸 App ID，签出来的包就没有 HealthKit 权限，
+          # 装到手机上会直接报 "Missing com.apple.developer.healthkit entitlement"。
+          # 这里自己造一份描述文件：内容是标准 plist，外层用 CMS 封装。
+          cat > build/profile/profile.plist <<PLIST
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>AppIDName</key><string>FitState</string>
+            <key>ApplicationIdentifierPrefix</key>
+            <array><string>${TEAM_ID}</string></array>
+            <key>CreationDate</key><date>2026-01-01T00:00:00Z</date>
+            <key>Platform</key>
+            <array><string>iOS</string></array>
+            <key>Entitlements</key>
+            <dict>
+              <key>application-identifier</key><string>${TEAM_ID}.com.god.fitstate</string>
+              <key>com.apple.developer.team-identifier</key>
+              <array><string>${TEAM_ID}</string></array>
+              <key>get-task-allow</key><true/>
+              <key>keychain-access-groups</key>
+              <array><string>${TEAM_ID}.com.god.fitstate</string></array>
+              <key>com.apple.developer.healthkit</key><true/>
+              <key>com.apple.developer.healthkit.access</key><array/>
+              <key>com.apple.security.application-groups</key>
+              <array><string>${APP_GROUP_RUNTIME_ID}</string></array>
+            </dict>
+            <key>Name</key><string>FitState</string>
+            <key>TeamIdentifier</key>
+            <array><string>${TEAM_ID}</string></array>
+            <key>TeamName</key><string>FitState</string>
+            <key>TimeToLive</key><integer>7</integer>
+            <key>UUID</key><string>00000000-0000-0000-0000-000000000000</string>
+            <key>Version</key><integer>1</integer>
+          </dict>
+          </plist>
+          PLIST
+
+          # 自签一份 CMS 外壳，让签名工具能按 mobileprovision 的方式解析
+          openssl req -x509 -newkey rsa:2048 -keyout build/profile/key.pem -out build/profile/cert.pem \
+            -days 3650 -nodes -subj "/CN=FitState Profile" >/dev/null 2>&1
+          openssl smime -sign -in build/profile/profile.plist -outform DER -nodetach -binary \
+            -signer build/profile/cert.pem -inkey build/profile/key.pem \
+            -out "$APP_PATH/embedded.mobileprovision"
+          rm -f build/profile/key.pem build/profile/cert.pem
+
+          echo "### embedded.mobileprovision 大小："
+          ls -l "$APP_PATH/embedded.mobileprovision"
+          echo "### 里面的 entitlements："
+          openssl smime -verify -in "$APP_PATH/embedded.mobileprovision" -inform DER -noverify 2>/dev/null || true
+
       - name: Package .ipa
         run: |
           set -euo pipefail
@@ -144,8 +210,7 @@ jobs:
           rm -rf build/ipa
           mkdir -p build/ipa/Payload
           cp -R "$APP_PATH" build/ipa/Payload/
-          # 未签名构建不携带 embedded.mobileprovision，Sideloadly 会在装机时重新签名
-          rm -f build/ipa/Payload/FitState.app/embedded.mobileprovision
+          # 注意：不要删 embedded.mobileprovision，签名工具靠它判断需要哪些能力
           cd build/ipa
           zip -qry FitState.ipa Payload
           ls -lh FitState.ipa
