@@ -38,7 +38,7 @@ require 'fileutils'
 APPLE_ID  = ENV.fetch('APPLE_ID')
 PASSWORD  = ENV.fetch('APP_SPECIFIC_PASSWORD')
 OUT_DIR   = ENV.fetch('OUT_DIR', 'build/portal')
-TEAM_ID   = ENV['TEAM_ID'].to_s
+TEAM_ID_ENV = ENV['TEAM_ID'].to_s
 DEVICE_UDID = ENV.fetch('DEVICE_UDID', '00008140-00166C2636D2801C')
 APP_BUNDLE    = ENV.fetch('TARGET_APP_BUNDLE_ID', 'com.god.fitstate')
 WIDGET_BUNDLE = ENV.fetch('TARGET_WIDGET_BUNDLE_ID', 'com.god.fitstate.widget')
@@ -62,15 +62,46 @@ require 'spaceship'
 # 登录
 # --------------------------------------------------------------------------
 client = Spaceship::PortalClient.login(APPLE_ID, PASSWORD)
-team = begin
-  client.team_information || {}
-rescue StandardError
-  {}
-end
-log "LOGIN_OK team=#{client.team_id} name=#{team['name']} type=#{team['type']}"
-log "FREE_TEAM=#{team['type'].to_s.downcase.include?('free') ? 'YES' : 'NO'}"
+# --------------------------------------------------------------------------
+# 团队（Team）
+#
+# 免费个人团队在门户里是有 teamId 的（Sideloadly 建 App ID 时就拿到了），
+# 但 listTeams 的返回结构未必完整，所以留一条从 App Store Connect 会话反查的退路。
+# --------------------------------------------------------------------------
+def resolve_team_id(client)
+  return TEAM_ID_ENV unless TEAM_ID_ENV.empty?
 
-TEAM_ID = client.team_id if TEAM_ID.empty?
+  begin
+    tid = client.team_id
+    return tid if tid && !tid.to_s.empty?
+  rescue StandardError => e
+    log "TEAM_ID_VIA_PORTAL_FAIL #{e.class}: #{e.message.to_s.lines.first.to_s.strip}"
+  end
+
+  begin
+    data = client.user_details_data
+    tid = data.dig('provider', 'providerId') || data.dig('provider', 'publicProviderId')
+    if tid && !tid.to_s.empty?
+      log "TEAM_ID_VIA_OLYMPUS #{tid}"
+      return tid
+    end
+  rescue StandardError => e
+    log "TEAM_ID_VIA_OLYMPUS_FAIL #{e.class}: #{e.message.to_s.lines.first.to_s.strip}"
+  end
+
+  nil
+end
+
+TEAM_ID = resolve_team_id(client)
+fail_hard('拿不到 Team ID') if TEAM_ID.nil? || TEAM_ID.to_s.empty?
+
+begin
+  team = client.team_information || {}
+rescue StandardError
+  team = {}
+end
+log "LOGIN_OK team=#{TEAM_ID} name=#{team['name']} type=#{team['type']}"
+log "FREE_TEAM=#{team['type'].to_s.downcase.include?('free') ? 'YES' : 'NO'}"
 
 # --------------------------------------------------------------------------
 # 列出已有 App ID
