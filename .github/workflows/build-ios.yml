@@ -1,27 +1,35 @@
 name: Build iOS App
 
-# 手动触发即可产出一个 .ipa，下载到 Windows 后用 Sideloadly 签名安装。
+# 两种签名模式：
+#   adhoc —— 免费个人团队路线。产出的包能装能启动，但签名里没有 HealthKit/App Groups 能力，
+#            打开会报 "Missing com.apple.developer.healthkit entitlement."。只用来验证 UI 跑得起来。
+#   apple —— Apple Developer Program 正规路线。用 App Store Connect API Key 让 xcodebuild 自己
+#            申请真描述文件（profile），产出的包由 Apple 签名，HealthKit / App Groups 都在里面。
 on:
   workflow_dispatch:
     inputs:
+      sign_mode:
+        description: '签名模式：adhoc（免费档，仅验证 UI）/ apple（ADP 正规签名，装机用这个）'
+        required: false
+        default: 'adhoc'
       app_group_id:
-        description: 'App Group ID（签名时向 Apple 声明的组，形如 group.com.god.fitstate）'
+        description: 'App Group ID（门户里注册的组，形如 group.com.god.fitstate）'
         required: false
         default: 'group.com.god.fitstate'
       app_group_runtime_id:
-        description: '运行时使用的 App Group ID（形如 group.<你的TeamID>.com.god.fitstate）'
+        description: '运行时使用的 App Group ID（apple 模式与 app_group_id 相同；adhoc 模式是签名工具改写后的值）'
         required: false
         default: 'group.com.god.fitstate'
       team_id:
-        description: '你的 Team ID（10 位大写字母数字，免费个人团队从签名工具改写后的 bundle id 末段取）'
+        description: '你的 Team ID（10 位大写字母数字，付费后与免费个人团队同一个）'
         required: false
         default: '97792VH57A'
       final_bundle_id:
-        description: '签名工具最终装到手机上的 bundle id（开了自动 bundle id 时是 <原 id>.<TeamID>）'
+        description: '最终装到手机上的 bundle id（apple 模式是 com.god.fitstate；adhoc 模式是 <原 id>.<TeamID>）'
         required: false
         default: 'com.god.fitstate.97792VH57A'
       device_udid:
-        description: '要装进去的设备 UDID（写进描述文件的 ProvisionedDevices）'
+        description: '要装进去的设备 UDID（apple 模式必须先在门户 Devices 里注册这台设备）'
         required: false
         default: '00008140-00166C2636D2801C'
   push:
@@ -36,6 +44,13 @@ jobs:
     name: Build .ipa
     runs-on: macos-15
     timeout-minutes: 40
+    env:
+      SIGN_MODE: ${{ inputs.sign_mode || 'adhoc' }}
+      APP_GROUP_ID: ${{ inputs.app_group_id || vars.APP_GROUP_ID || 'group.com.god.fitstate' }}
+      APP_GROUP_RUNTIME_ID: ${{ inputs.app_group_runtime_id || vars.APP_GROUP_RUNTIME_ID || 'group.com.god.fitstate' }}
+      TEAM_ID: ${{ inputs.team_id || vars.TEAM_ID || '97792VH57A' }}
+      FINAL_BUNDLE_ID: ${{ inputs.final_bundle_id || vars.FINAL_BUNDLE_ID || 'com.god.fitstate.97792VH57A' }}
+      DEVICE_UDID: ${{ inputs.device_udid || vars.DEVICE_UDID || '00008140-00166C2636D2801C' }}
 
     steps:
       - name: Checkout
@@ -62,17 +77,86 @@ jobs:
           set -euo pipefail
           xcodegen generate --spec project.yml
 
-      - name: Build
-        env:
-          APP_GROUP_ID: ${{ inputs.app_group_id || vars.APP_GROUP_ID || 'group.com.god.fitstate' }}
-          APP_GROUP_RUNTIME_ID: ${{ inputs.app_group_runtime_id || vars.APP_GROUP_RUNTIME_ID || 'group.com.god.fitstate' }}
+      - name: Show build plan
         run: |
           set -euo pipefail
-          export APP_GROUP_ID
-          export APP_GROUP_RUNTIME_ID
-          echo "APP_GROUP_ID=$APP_GROUP_ID"
-          echo "APP_GROUP_RUNTIME_ID=$APP_GROUP_RUNTIME_ID"
+          echo "### 签名模式 = $SIGN_MODE"
+          echo "### App Group = $APP_GROUP_ID"
+          echo "### 运行时 App Group = $APP_GROUP_RUNTIME_ID"
+          echo "### Team ID = $TEAM_ID"
+          echo "### 目标 bundle id = $FINAL_BUNDLE_ID"
+          echo "### 设备 UDID = $DEVICE_UDID"
 
+      # ---------------------------------------------------------------------
+      # apple 模式：准备 App Store Connect API Key
+      # ---------------------------------------------------------------------
+      - name: Prepare App Store Connect API key
+        if: env.SIGN_MODE == 'apple'
+        env:
+          ADP_KEY_P8_B64: ${{ secrets.ADP_KEY_P8_B64 }}
+          ADP_KEY_ID: ${{ secrets.ADP_KEY_ID }}
+          ADP_ISSUER_ID: ${{ secrets.ADP_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+          if [ -z "$ADP_KEY_P8_B64" ] || [ -z "$ADP_KEY_ID" ] || [ -z "$ADP_ISSUER_ID" ]; then
+            echo "::error::缺少仓库 secrets：ADP_KEY_P8_B64 / ADP_KEY_ID / ADP_ISSUER_ID"
+            echo "::error::请在 Settings -> Secrets and variables -> Actions 里补上这三个 secret"
+            exit 1
+          fi
+          mkdir -p build/key
+          printf '%s' "$ADP_KEY_P8_B64" | base64 --decode > "build/key/AuthKey_${ADP_KEY_ID}.p8"
+          chmod 600 "build/key/AuthKey_${ADP_KEY_ID}.p8"
+          echo "### API Key 就位：AuthKey_${ADP_KEY_ID}.p8"
+
+      # ---------------------------------------------------------------------
+      # apple 模式：正规签名构建
+      # ---------------------------------------------------------------------
+      - name: Build (Apple signed)
+        if: env.SIGN_MODE == 'apple'
+        env:
+          ADP_KEY_ID: ${{ secrets.ADP_KEY_ID }}
+          ADP_ISSUER_ID: ${{ secrets.ADP_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+          # -allowProvisioningUpdates 让 xcodebuild 用 API Key 去门户自动建 App ID、
+          # 建证书、建描述文件；产出的 .app 里会自带 Apple 签的 embedded.mobileprovision，
+          # 描述文件里带 com.apple.developer.healthkit 与 App Groups。
+          set +e
+          xcodebuild \
+            -project FitState.xcodeproj \
+            -scheme FitState \
+            -configuration Release \
+            -sdk iphoneos \
+            -derivedDataPath build \
+            -destination 'generic/platform=iOS' \
+            -allowProvisioningUpdates \
+            -allowProvisioningDeviceRegistration \
+            -authenticationKeyPath "build/key/AuthKey_${ADP_KEY_ID}.p8" \
+            -authenticationKeyID "$ADP_KEY_ID" \
+            -authenticationKeyIssuerID "$ADP_ISSUER_ID" \
+            APP_GROUP_ID="$APP_GROUP_ID" \
+            APP_GROUP_RUNTIME_ID="$APP_GROUP_RUNTIME_ID" \
+            DEVELOPMENT_TEAM="$TEAM_ID" \
+            CODE_SIGN_STYLE=Automatic \
+            CODE_SIGN_IDENTITY="Apple Development" \
+            build > build-apple.log 2>&1
+          RC=$?
+          set -e
+          if [ $RC -ne 0 ]; then
+            echo "### 构建失败，日志尾部："
+            tail -80 build-apple.log || true
+            echo "::error::xcodebuild 失败"
+            exit 1
+          fi
+          tail -5 build-apple.log || true
+
+      # ---------------------------------------------------------------------
+      # adhoc 模式：未签名构建
+      # ---------------------------------------------------------------------
+      - name: Build (unsigned, for ad-hoc signing)
+        if: env.SIGN_MODE != 'apple'
+        run: |
+          set -euo pipefail
           # 未签名构建。Xcode 26+ 禁止用 ad-hoc 身份签 iOS 设备包
           # （Ad Hoc code signing is not allowed with SDK 'iOS 26.2'），
           # 所以这里先出无签名产物，再在下一步用 codesign 手动盖 ad-hoc 签名。
@@ -103,18 +187,7 @@ jobs:
           fi
           tail -5 build-unsigned.log || true
 
-          # 校验 Info.plist 里的运行时 App Group ID 真的被展开了
-          APP_PATH="build/Build/Products/Release-iphoneos/FitState.app"
-          RUNTIME_ID=$(/usr/libexec/PlistBuddy -c "Print :AppGroupIdentifier" "$APP_PATH/Info.plist")
-          echo "### 运行时 App Group ID = $RUNTIME_ID"
-          if [ -z "$RUNTIME_ID" ] || [[ "$RUNTIME_ID" == *'$('* ]]; then
-            echo "::error::Info.plist 的 AppGroupIdentifier 没有被正确展开：$RUNTIME_ID"
-            exit 1
-          fi
-
-      - name: Verify and ad-hoc sign
-        env:
-          APP_GROUP_ID: ${{ inputs.app_group_id || vars.APP_GROUP_ID || 'group.com.god.fitstate' }}
+      - name: Verify product layout
         run: |
           set -euo pipefail
           APP_PATH="build/Build/Products/Release-iphoneos/FitState.app"
@@ -135,6 +208,59 @@ jobs:
           echo "### 产物大小："
           du -sh "$APP_PATH"
 
+          # 校验 Info.plist 里的运行时 App Group ID 真的被展开了
+          RUNTIME_ID=$(/usr/libexec/PlistBuddy -c "Print :AppGroupIdentifier" "$APP_PATH/Info.plist")
+          echo "### 运行时 App Group ID = $RUNTIME_ID"
+          if [ -z "$RUNTIME_ID" ] || [[ "$RUNTIME_ID" == *'$('* ]]; then
+            echo "::error::Info.plist 的 AppGroupIdentifier 没有被正确展开：$RUNTIME_ID"
+            exit 1
+          fi
+
+      # ---------------------------------------------------------------------
+      # apple 模式：能力校验 + 签内层扩展
+      # ---------------------------------------------------------------------
+      - name: Verify entitlements and sign embedded extension
+        if: env.SIGN_MODE == 'apple'
+        run: |
+          set -euo pipefail
+          APP_PATH="build/Build/Products/Release-iphoneos/FitState.app"
+
+          if [ ! -f "$APP_PATH/embedded.mobileprovision" ]; then
+            echo "::error::缺少 embedded.mobileprovision，xcodebuild 没有完成正规签名"
+            exit 1
+          fi
+
+          security cms -D -i "$APP_PATH/embedded.mobileprovision" > build/profile-real.plist
+          echo "### 描述文件里的 Entitlements："
+          /usr/libexec/PlistBuddy -c "Print :Entitlements" build/profile-real.plist || true
+          echo "### 描述文件有效期 / 设备："
+          /usr/libexec/PlistBuddy -c "Print :ExpirationDate" build/profile-real.plist || true
+          /usr/libexec/PlistBuddy -c "Print :ProvisionedDevices" build/profile-real.plist || true
+
+          # 硬闸门：HealthKit 与 App Groups 必须真的在描述文件里，否则装到手机上
+          # 一定会报 "Missing com.apple.developer.healthkit entitlement."
+          if ! /usr/libexec/PlistBuddy -c "Print :Entitlements:com.apple.developer.healthkit" build/profile-real.plist >/dev/null 2>&1; then
+            echo "::error::描述文件里没有 com.apple.developer.healthkit —— 门户上的 App ID 没勾 HealthKit 能力"
+            exit 1
+          fi
+          if ! /usr/libexec/PlistBuddy -c "Print :Entitlements:com.apple.security.application-groups" build/profile-real.plist >/dev/null 2>&1; then
+            echo "::error::描述文件里没有 com.apple.security.application-groups —— 门户上没给这个 App ID 配 App Group"
+            exit 1
+          fi
+          if ! /usr/libexec/PlistBuddy -c "Print :ProvisionedDevices" build/profile-real.plist 2>/dev/null | grep -q "$DEVICE_UDID"; then
+            echo "::error::描述文件里没有目标设备 $DEVICE_UDID —— 门户 Devices 里还没注册这台 iPhone"
+            exit 1
+          fi
+
+          echo "### App 的签名 entitlements："
+          codesign -d --entitlements :- "$APP_PATH" || true
+
+      - name: Verify and ad-hoc sign
+        if: env.SIGN_MODE != 'apple'
+        run: |
+          set -euo pipefail
+          APP_PATH="build/Build/Products/Release-iphoneos/FitState.app"
+
           # 把 $(APP_GROUP_ID) 展开成实际值，写进临时 entitlements
           mkdir -p build/ent
           sed 's|$(APP_GROUP_ID)|'"$APP_GROUP_ID"'|g' Sources/App/FitState.entitlements > build/ent/app.plist
@@ -149,12 +275,11 @@ jobs:
           echo "### 嵌入的 entitlements："
           codesign -d --entitlements :- "$APP_PATH" || true
 
+      # ---------------------------------------------------------------------
+      # adhoc 模式：自造一份描述文件给签名工具看
+      # ---------------------------------------------------------------------
       - name: Embed provisioning profile hint
-        env:
-          TEAM_ID: ${{ inputs.team_id || vars.TEAM_ID || '97792VH57A' }}
-          APP_GROUP_RUNTIME_ID: ${{ inputs.app_group_runtime_id || vars.APP_GROUP_RUNTIME_ID || 'group.com.god.fitstate' }}
-          FINAL_BUNDLE_ID: ${{ inputs.final_bundle_id || vars.FINAL_BUNDLE_ID || 'com.god.fitstate.97792VH57A' }}
-          DEVICE_UDID: ${{ inputs.device_udid || vars.DEVICE_UDID || '00008140-00166C2636D2801C' }}
+        if: env.SIGN_MODE != 'apple'
         run: |
           set -euo pipefail
           APP_PATH="build/Build/Products/Release-iphoneos/FitState.app"
@@ -230,8 +355,6 @@ jobs:
 
           echo "### embedded.mobileprovision 大小："
           ls -l "$APP_PATH/embedded.mobileprovision"
-          echo "### 里面的 entitlements："
-          openssl smime -verify -in "$APP_PATH/embedded.mobileprovision" -inform DER -noverify 2>/dev/null || true
 
       - name: Package .ipa
         run: |
@@ -240,7 +363,6 @@ jobs:
           rm -rf build/ipa
           mkdir -p build/ipa/Payload
           cp -R "$APP_PATH" build/ipa/Payload/
-          # 注意：不要删 embedded.mobileprovision，签名工具靠它判断需要哪些能力
           cd build/ipa
           zip -qry FitState.ipa Payload
           ls -lh FitState.ipa
@@ -262,9 +384,16 @@ jobs:
         if: always()
         run: |
           {
-            echo "### 构建完成"
+            echo "### 构建完成（签名模式：$SIGN_MODE）"
             echo ""
-            echo "下载 FitState-ipa 制品里的 FitState.ipa，用 Sideloadly 装到 iPhone。"
+            if [ "$SIGN_MODE" = "apple" ]; then
+              echo "下载 FitState-ipa 制品里的 FitState.ipa。"
+              echo "这是 Apple 正签的包，**不要**再用 Sideloadly 装（它会重签并抹掉能力），"
+              echo "请用 Apple Configurator 2 / Apple Devices / iMazing 安装。"
+            else
+              echo "下载 FitState-ipa 制品里的 FitState.ipa，用 Sideloadly 装到 iPhone。"
+              echo "注意：该模式没有 HealthKit 能力，App 会报 entitlement 缺失。"
+            fi
             echo ""
-            echo "如果之后要升级 App Group，请在仓库 Settings -> Secrets and variables -> Actions 里设置 APP_GROUP_ID 变量。"
+            echo "如果之后要改 App Group，请在仓库 Settings -> Secrets and variables -> Actions 里改 APP_GROUP_ID 变量。"
           } >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
