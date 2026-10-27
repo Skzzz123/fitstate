@@ -18,9 +18,11 @@ KEYCHAIN_DB="build/ci-signing.keychain-db"
 KEYCHAIN_PW="fitstate"
 P12_PW="fitstate"
 
-[ -f "$MANIFEST" ] || { echo "::error::缺少 $MANIFEST"; exit 1; }
-[ -f "$PORTAL_DIR/portal.p12" ] || { echo "::error::缺少 $PORTAL_DIR/portal.p12"; exit 1; }
-[ -d "$APP_PATH" ] || { echo "::error::缺少产物 $APP_PATH"; exit 1; }
+die() { echo "::error::$1"; exit 1; }
+
+[ -f "$MANIFEST" ] || die "缺少 $MANIFEST"
+[ -f "$PORTAL_DIR/portal.p12" ] || die "缺少 $PORTAL_DIR/portal.p12"
+[ -d "$APP_PATH" ] || die "缺少产物 $APP_PATH"
 
 mkdir -p build/ent
 
@@ -44,6 +46,7 @@ set_plist_string() {  # $1=plist $2=key $3=value
     || /usr/libexec/PlistBuddy -c "Add $2 string $3" "$1"
 }
 
+echo "### [1/5] 改写 bundle id 与 App Group"
 if [ -n "$APP_BUNDLE" ] && [ "$APP_BUNDLE" != "null" ]; then
   set_plist_string "$APP_PATH/Info.plist" ":CFBundleIdentifier" "$APP_BUNDLE"
 fi
@@ -64,15 +67,26 @@ fi
 # ---------------------------------------------------------------------------
 # 2. 导入证书
 # ---------------------------------------------------------------------------
-security delete-keychain "$KEYCHAIN_DB" 2>/dev/null || true
-security create-keychain -p "$KEYCHAIN_PW" "$KEYCHAIN_DB"
-security unlock-keychain -p "$KEYCHAIN_PW" "$KEYCHAIN_DB"
-security set-keychain-settings -lut 3600 "$KEYCHAIN_DB"
-security import "$PORTAL_DIR/portal.p12" -k "$KEYCHAIN_DB" -P "$P12_PW" \
-  -T /usr/bin/codesign -T /usr/bin/security
-security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PW" "$KEYCHAIN_DB" >/dev/null
+echo "### [2/5] 创建临时钥匙串"
+security delete-keychain "$KEYCHAIN_DB" >/dev/null 2>&1 || true
+security create-keychain -p "$KEYCHAIN_PW" "$KEYCHAIN_DB" >/dev/null 2>&1 \
+  || die "create-keychain 失败"
+security unlock-keychain -p "$KEYCHAIN_PW" "$KEYCHAIN_DB" >/dev/null 2>&1 || true
+security set-keychain-settings -lut 3600 "$KEYCHAIN_DB" >/dev/null 2>&1 || true
 
-IDENTITY=$(security find-identity -v -p codesigning "$KEYCHAIN_DB" | grep -m1 '"' | sed 's/.*"\(.*\)"/\1/')
+echo "### [2/5] 导入 p12"
+security import "$PORTAL_DIR/portal.p12" -k "$KEYCHAIN_DB" -P "$P12_PW" -A \
+  || die "导入 p12 失败"
+
+echo "### [2/5] 设置钥匙串分区列表"
+security list-keychain -d user -s "$KEYCHAIN_DB" >/dev/null 2>&1 || true
+security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PW" "$KEYCHAIN_DB" \
+  >/dev/null 2>&1 || true
+
+echo "### [2/5] 查找签名身份"
+IDENTITY=""
+IDENTITY=$(security find-identity -v -p codesigning "$KEYCHAIN_DB" 2>/dev/null \
+  | sed -n 's/.*"\(.*\)"/\1/p' | head -1) || true
 if [ -z "$IDENTITY" ]; then
   echo "::error::钥匙串里没有可用的签名身份"
   security find-identity -v -p codesigning "$KEYCHAIN_DB" || true
@@ -84,24 +98,28 @@ echo "### 签名身份：$IDENTITY"
 # 3. 从描述文件里取出 Entitlements（描述文件里有什么，App 就有什么权限）
 # ---------------------------------------------------------------------------
 extract_entitlements() {  # $1=profile $2=out
-  security cms -D -i "$1" > build/profile-decoded.plist
-  /usr/libexec/PlistBuddy -x -c "Print :Entitlements" build/profile-decoded.plist > "$2"
+  security cms -D -i "$1" > build/profile-decoded.plist \
+    || die "解不开描述文件 $1"
+  /usr/libexec/PlistBuddy -x -c "Print :Entitlements" build/profile-decoded.plist > "$2" \
+    || die "描述文件 $1 里没有 Entitlements"
 }
 
 sign_with() {  # $1=entitlements $2=bundle
   codesign --force --sign "$IDENTITY" --keychain "$KEYCHAIN_DB" \
     --entitlements "$1" --timestamp=none --generate-entitlement-der "$2" 2>/dev/null \
     || codesign --force --sign "$IDENTITY" --keychain "$KEYCHAIN_DB" \
-         --entitlements "$1" --timestamp=none "$2"
+         --entitlements "$1" --timestamp=none "$2" \
+    || die "codesign 失败：$2"
 }
 
 # ---------------------------------------------------------------------------
 # 4. 先签内层扩展，再签外层 App
 # ---------------------------------------------------------------------------
+echo "### [3/5] 签小组件扩展"
 if [ -n "$WIDGET_PROFILE" ] && [ "$WIDGET_PROFILE" != "null" ] && [ -f "$PORTAL_DIR/$WIDGET_PROFILE" ]; then
   cp "$PORTAL_DIR/$WIDGET_PROFILE" "$WIDGET_PATH/embedded.mobileprovision"
   extract_entitlements "$PORTAL_DIR/$WIDGET_PROFILE" build/ent/widget.entitlements
-  echo "### 小组件 entitlements："
+  echo "--- 小组件 entitlements ---"
   cat build/ent/widget.entitlements
   sign_with build/ent/widget.entitlements "$WIDGET_PATH"
   echo "### 小组件已签"
@@ -109,9 +127,10 @@ else
   echo "### 没有小组件描述文件，跳过扩展签名"
 fi
 
+echo "### [4/5] 签主 App"
 cp "$PORTAL_DIR/$APP_PROFILE" "$APP_PATH/embedded.mobileprovision"
 extract_entitlements "$PORTAL_DIR/$APP_PROFILE" build/ent/app.entitlements
-echo "### App entitlements："
+echo "--- App entitlements ---"
 cat build/ent/app.entitlements
 sign_with build/ent/app.entitlements "$APP_PATH"
 echo "### App 已签"
@@ -119,6 +138,7 @@ echo "### App 已签"
 # ---------------------------------------------------------------------------
 # 5. 校验：HealthKit 必须在签名里
 # ---------------------------------------------------------------------------
+echo "### [5/5] 校验签名"
 SIGNED_ENT=$(codesign -d --entitlements :- "$APP_PATH" 2>/dev/null || true)
 echo "### 签名中的 entitlements："
 echo "$SIGNED_ENT"
@@ -132,5 +152,5 @@ if ! echo "$SIGNED_ENT" | grep -q "com.apple.security.application-groups"; then
 fi
 codesign -v --strict "$APP_PATH" || echo "::warning::codesign 校验有告警"
 
-security delete-keychain "$KEYCHAIN_DB" 2>/dev/null || true
+security delete-keychain "$KEYCHAIN_DB" >/dev/null 2>&1 || true
 echo "SIGN_OK"
