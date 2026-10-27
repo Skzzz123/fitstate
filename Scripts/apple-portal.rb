@@ -94,8 +94,32 @@ def login_with_strategy(name)
   Spaceship::PortalClient.login(APPLE_ID, PASSWORD)
 end
 
+# --------------------------------------------------------------------------
+# 登录探针用的补丁
+#
+# 关键是要拿到 Apple 回应的 body —— 401 时 spaceship 会把 body 吞掉，
+# 只抛一个 "Unauthorized Access"，看不出到底是密码错、hashcash 缺失还是被限流。
+# --------------------------------------------------------------------------
+module Spaceship
+  class Client
+    attr_accessor :probe_last_response
+
+    alias_method :orig_handle_error, :handle_error
+    def handle_error(response)
+      self.probe_last_response = response
+      orig_handle_error(response)
+    end
+
+    alias_method :orig_fetch_hashcash, :fetch_hashcash
+    def fetch_hashcash
+      hc = orig_fetch_hashcash
+      puts "[portal] PROBE_HASHCASH #{hc.nil? ? 'NIL（Apple 没给 hashcash 头）' : 'OK'}"
+      hc
+    end
+  end
+end
+
 def raw_login_probe
-  # 裸跑一次，把 Apple 的原话、widget key、hashcash 状态都打出来
   begin
     probe = Spaceship::PortalClient.new
     log "PROBE_WIDGET_KEY #{probe.itc_service_key.inspect}"
@@ -103,21 +127,33 @@ def raw_login_probe
     log "PROBE_WIDGET_KEY_FAIL #{e.class}: #{e.message.to_s.lines.first.to_s.strip}"
   end
 
+  probe = nil
   begin
     probe = Spaceship::PortalClient.new
     resp = probe.do_sirp(APPLE_ID, PASSWORD, nil)
     log "PROBE_SIRP status=#{resp.status} body=#{resp.body.to_s[0, 800]}"
   rescue StandardError => e
-    log "PROBE_SIRP_FAIL #{e.class}: #{e.message.to_s.lines.first.to_s.strip}"
+    r = probe&.probe_last_response
+    if r
+      log "PROBE_SIRP status=#{r.status} body=#{r.body.to_s[0, 800]}"
+    else
+      log "PROBE_SIRP_FAIL #{e.class}: #{e.message.to_s.lines.first.to_s.strip}"
+    end
   end
 
+  probe = nil
   begin
     probe = Spaceship::PortalClient.new
     ENV['FASTLANE_USE_LEGACY_PRE_SIRP_AUTH'] = '1'
     resp = probe.perform_login_method(APPLE_ID, PASSWORD, nil)
     log "PROBE_LEGACY status=#{resp.status} body=#{resp.body.to_s[0, 800]}"
   rescue StandardError => e
-    log "PROBE_LEGACY_FAIL #{e.class}: #{e.message.to_s.lines.first.to_s.strip}"
+    r = probe&.probe_last_response
+    if r
+      log "PROBE_LEGACY status=#{r.status} body=#{r.body.to_s[0, 800]}"
+    else
+      log "PROBE_LEGACY_FAIL #{e.class}: #{e.message.to_s.lines.first.to_s.strip}"
+    end
   ensure
     ENV.delete('FASTLANE_USE_LEGACY_PRE_SIRP_AUTH')
   end
