@@ -76,7 +76,7 @@ Actions → **Build iOS App** → **Run workflow**，`sign_mode` 选 **`portal`*
 | 输入 | 填什么 |
 |---|---|
 | `sign_mode` | `portal` |
-| `app_group_id` | `group.com.god.fitstate`（门户里注册时的名字，见下） |
+| `app_group_id` | `group.97792VH57A.com.god.fitstate`（免费团队必须带 Team ID 前缀；脚本会自动纠正写法） |
 | `app_group_runtime_id` | 同上 |
 | `team_id` | `97792VH57A` |
 | `final_bundle_id` | `com.god.fitstate` |

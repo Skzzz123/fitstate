@@ -326,7 +326,20 @@ enable_service(portal, TEAM_ID, widget, APPGROUP_FEATURE, 'AppGroup') if widget
 # 用户组（App Groups）
 # --------------------------------------------------------------------------
 group_id = GROUP_ID_ENV
-group_id = "group.#{TEAM_ID}.#{APP_BUNDLE}" if group_id.to_s.empty?
+if group_id.to_s.empty?
+  group_id = "group.#{TEAM_ID}.#{APP_BUNDLE}"
+else
+  # 免费个人团队的 App Group 标识符必须带 Team ID 前缀，
+  # 也就是 group.<TeamID>.xxx —— 不带前缀门户会直接拒收。
+  # 这里统一纠正成标准形式，别名（group.com.god.fitstate）也能吃。
+  suffix = group_id.to_s.sub(/\Agroup\./, '')
+  suffix = suffix.sub(/\A#{Regexp.escape(TEAM_ID)}\./, '')
+  expected = "group.#{TEAM_ID}.#{suffix}"
+  if expected != group_id
+    log "APP_GROUP_RENAME #{group_id} -> #{expected}"
+    group_id = expected
+  end
+end
 
 group_app_id = nil
 begin
