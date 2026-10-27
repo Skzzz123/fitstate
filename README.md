@@ -43,62 +43,95 @@ git push -u origin main
 
 ---
 
-## 三、在开发者门户做一次性设置（约 10 分钟）
+## 三、Apple 账号：免费账号到底能做到哪一步
 
-这一步**不能跳过**：HealthKit 和 App Groups 是两项 capability，必须在 App ID 上启用，
-否则 App 装上了也读不到数据。
+这是整条流程里唯一有门槛的地方，先把事实摆清楚（2026-10-27 实测）：
 
-### 3.1 拿到你的 Team ID
+| 能力 | 免费 Apple 账号 | Apple Developer Program（$99/年） |
+|---|---|---|
+| HealthKit capability | ✅ 可以 | ✅ 可以 |
+| App Groups | ✅ 可以 | ✅ 可以 |
+| 门户里手动注册 App ID / App Group / 设备 | ❌ 进不去 | ✅ 可以 |
+| Xcode Cloud 云编译 | ❌ | ✅ |
+| TestFlight | ❌ | ✅ |
+| 签名证书有效期 | **7 天** | 1 年 |
 
-1. 打开 <https://developer.apple.com/account> → 点「Membership details」（或任意 App ID 页面）
-2. 复制右上角的 **Team ID**（10 位大写字母数字，例如 `ABCDE12345`）
+「HealthKit 免费账号可以用」不是猜测——来自 Apple 官方能力矩阵
+<https://developer.apple.com/help/account/reference/supported-capabilities-ios/>，
+HealthKit 那一行在 ADP / ADEP / Apple Developer（免费）三列全是 ✅。
 
-### 3.2 注册 App ID
+但是**免费账号进不了「证书、标识符和描述文件」**：访问
+<https://developer.apple.com/account/resources/identifiers/list> 会直接被挡回来——
+> Access Unavailable — This resource is only for developers enrolled in a developer program
 
-1. 左侧 **Identifiers** → 右上角 `+` → 选 **App IDs**
-2. Description 填 `FitState`
-3. 选 **Explicit**（不用 Wildcard），Bundle ID 填：
+所以下面 3.1 的「手动建 App ID」这条路，免费账号走不通。
 
-   ```
-   com.god.fitstate
-   ```
+### 3.1 路线 A：免费账号（本文默认，先跑通再说）
 
-4. 在 Capabilities 里打开这两项：
-   - ✅ **HealthKit**
-   - ✅ **App Groups**（并点 `+` 新建一个组，名字见下）
-5. 继续 → Register
+免费账号靠**签名工具自动建 App ID**。Xcode 的自动签名（Personal Team）和 Sideloadly
+走的是同一套 Apple 接口：签名的那一刻自动创建 App ID，并带上 App 声明的 capability。
+所以免费账号装得上、HealthKit 也能授权，代价只有证书 7 天到期。
 
-> App Group 的名字必须以你的 Team ID 开头：
-> `group.<你的TeamID>.com.god.fitstate`
-> 例如 Team ID 是 `ABCDE12345`，就填 `group.ABCDE12345.com.god.fitstate`
+具体操作：
 
-### 3.3 注册你的 iPhone
+1. **不用碰开发者门户**，直接跳到第四步编译。
+2. 编译时 App Group ID 先用占位值 `group.com.god.fitstate`；
+   真正生效的组名在签名阶段由工具补上 Team ID 前缀。
+3. 用 Sideloadly 装完之后，Windows 证书库里会出现它自动创建的「Apple Development」证书，
+   **证书主体里就带 10 位 Team ID**（形如 `ABCDE12345`）。
+4. 如果小组件显示「打开 App 完成授权」，就用
+   `group.<TeamID>.com.god.fitstate` 重新编译一次、重新安装即可。
 
-1. **Identifiers** → 左侧 **Devices** → `+`
-2. 在 **iPhone 上用 Safari 打开 <https://udid.tech>**，页面上方会显示你的 UDID，复制
-3. 粘贴 UDID，Name 填 `我的 iPhone` → Register
+### 3.2 路线 B：付费账号（$99/年，更省心）
 
-### 3.4 记下 App Group ID
+如果实测发现免费档走不通，或者你不想每 7 天续签一次：
 
-把 `group.<你的TeamID>.com.god.fitstate` 记下来。后面编译时要用到它。
+1. <https://developer.apple.com/programs/> 加入 Apple Developer Program
+2. 门户 → **Identifiers** → `+` → **App IDs** → **Explicit** →
+   Bundle ID 填 `com.god.fitstate` → Capabilities 勾上 **HealthKit** 和 **App Groups**
+   → App Group 填 `group.<你的TeamID>.com.god.fitstate` → Register
+3. **Identifiers** → **Devices** → `+` 注册 iPhone 的 UDID
+   （iPhone 用 Safari 打开 <https://udid.tech>，页面上方直接显示）
+4. **证书** 页建一个 Apple Development 证书并导出 `.p12`
+5. 把 p12 与密码放进仓库的 Actions **Secrets**（`P12_BASE64` / `P12_PASSWORD`），
+   CI 就能产出**正式签名**的 .ipa，一年内不用重签
+6. 更进一步：开通 **Xcode Cloud**，push 完自动出包，连手动下载都省了
 
 ---
 
 ## 四、编译出 .ipa
 
-### 方式 A：GitHub Actions（推荐）
+### 4.1 方式 A：GitHub Actions（本文默认）
 
-1. 打开仓库 → **Actions** → 左边选 **Build iOS App** → 右边点 **Run workflow**
-2. 在 `app_group_id` 里填第三步记下的 App Group ID（或者用默认的 `group.com.god.fitstate` 先试）
-3. 等 3–6 分钟，绿色的 **Build unsigned .ipa** 跑完
-4. 在这次运行的页面底部 **Artifacts** 区域下载 **FitState-ipa**
-5. 解压后拿到 `FitState.ipa`
+仓库：**https://github.com/Skzzz123/fitstate**（public，macOS runner 免费不限量）
 
-> 想让以后每次 push 都自动编译、并且省掉填 App Group ID 的麻烦：
-> 在仓库 **Settings → Secrets and variables → Actions** 里加一个 **Variables**（不是 Secrets），
+**自动触发**：任何一次改动 `Sources/**`、`project.yml` 或 workflow 本身的 push，
+都会自动跑一次编译。编译完在 Actions 运行页底部 **Artifacts** 区域下载 **FitState-ipa**，
+解压得到 `FitState.ipa`。
+
+**手动触发**：Actions → 左边选 **Build iOS App** → 右边 **Run workflow**，
+可以在 `app_group_id` 里指定 App Group ID（不填就用默认的 `group.com.god.fitstate`）。
+
+> 想让以后每次 push 都自动用上你的 App Group ID：
+> 仓库 **Settings → Secrets and variables → Actions** 里加一个 **Variables**（不是 Secrets），
 > 名字叫 `APP_GROUP_ID`，值填你的 App Group ID。
 
-### 方式 B：以后买了 Mac（可选）
+### 4.2 这条流水线具体做了什么（以及为什么）
+
+1. 选 runner 上最新的 Xcode（当前是 Xcode 26.3 / iOS 26.2 SDK）
+2. `brew install xcodegen` → `xcodegen generate --spec project.yml` 生成工程
+3. **未签名构建**：
+   > Xcode 26+ 明确禁止用 ad-hoc 身份签 iOS 设备包
+   > （`Ad Hoc code signing is not allowed with SDK 'iOS 26.2'`），
+   > 所以这里先出无签名产物。
+4. **手动 ad-hoc 签名**：用 `codesign --force --sign - --entitlements ...` 给主程序和
+   小组件扩展分别盖上 ad-hoc 签名，并把 HealthKit / App Group 的 entitlements 真正写进二进制。
+   **这一步很关键**——Sideloadly 重新签名时会读原包里的 entitlements，
+   没有它就会丢能力，装上后读不到健康数据。
+5. **三重校验**（防止再产出空壳 ipa）：主程序二进制、小组件扩展、小组件二进制必须都在，
+   且最终 ipa 不得小于 50 KB。任何一项不满足直接让流水线失败。
+
+### 4.3 方式 B：以后买了 Mac（可选）
 
 ```bash
 brew install xcodegen
@@ -110,20 +143,34 @@ open FitState.xcodeproj
 
 ## 五、在 Windows 上装到 iPhone
 
-### 5.1 装三个工具
+### 5.1 装工具
 
-1. **Sideloadly**：<https://sideloadly.io> → 下载 Windows 版
-2. **iTunes（官网版，不是 Microsoft Store 版）**：<https://www.apple.com/itunes>
-   - Windows 电脑上如果装过 Microsoft Store 版 iTunes，先卸载
-3. **iCloud（官网版）**：<https://www.apple.com/icloud> → 往下滑找「Windows 版 iCloud」
+| 工具 | 装到哪 | 说明 |
+|---|---|---|
+| **Sideloadly** | `%LOCALAPPDATA%\Sideloadly\` | 免管理员权限，装完就有 `sideloadly.exe` 和后台守护 `sideloadlydaemon.exe` |
+| **iTunes（官网版）** | `C:\Program Files\iTunes\` | **必须官网版**。Microsoft Store 版驱动老，Sideloadly 经常认不到手机 |
+| **iCloud（官网版）** | 可选 | 侧载本身用不到。想在 Windows 上同步 Apple 账号再装 |
 
-> **为什么强调官网版**：Microsoft Store 版 iTunes 的驱动版本老，Sideloadly 经常认不到手机。
-> 装完 iTunes 后重启一次电脑。
+**静默安装命令**（管理员 PowerShell）：
+
+```powershell
+Start-Process -FilePath .\iTunesSetup.exe -ArgumentList '/quiet','/norestart' -Verb RunAs -Wait
+Start-Process -FilePath .\SideloadlySetup64.exe -ArgumentList '/S' -Verb RunAs -Wait
+```
+
+> **踩过的坑**：给 Apple 安装器传 `/log "D:\某个带空格的路径\log.txt"` 会报 **1622**
+> （打不开安装日志文件）——`/log` 的路径不要带空格。
+> iCloud 装完报 **1603** 是正常的：它要求重启。侧载不依赖 iCloud，可以先忽略。
+
+> Sideloadly 自带设备通信层（`sideloadlydaemon.exe`），**不装「Apple 移动设备支持」也能连手机**，
+> 不用特意去补这个组件。
 
 ### 5.2 用数据线连接
 
-- iPhone 用数据线连电脑，解锁
-- 手机上弹「信任此电脑吗？」→ **信任**
+- iPhone 用数据线连电脑，**保持解锁状态**
+- 手机上会弹「**信任此电脑吗？**」→ 点**信任** → 输入锁屏密码
+  （不点信任的话，Sideloadly 的设备下拉框会是空的）
+- Windows 设备管理器里应该能看到 `iPhone (Composite Parent)`
 - Sideloadly 顶部设备下拉框里应该能看到你的 iPhone
 
 ### 5.3 签名并安装
