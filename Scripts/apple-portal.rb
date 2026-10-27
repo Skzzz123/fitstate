@@ -78,9 +78,67 @@ require 'spaceship'
 
 # --------------------------------------------------------------------------
 # 登录
+#
+# spaceship 有两条登录路径：
+#   1. SIRP（默认，2023 年 Apple 改的）——密码先做 PBKDF2 再走挑战应答
+#   2. legacy pre-SIRP（FASTLANE_USE_LEGACY_PRE_SIRP_AUTH=1）——直接 POST 明文密码
+# App 专用密码在 legacy 路径上是被接受的，而 SIRP 路径对某些账号会莫名其妙 401。
+# 所以两条都试，先 legacy 后 SIRP。
 # --------------------------------------------------------------------------
-client = Spaceship::PortalClient.login(APPLE_ID, PASSWORD)
-log 'LOGIN_OK'
+def login_with_strategy(name)
+  if name == 'legacy'
+    ENV['FASTLANE_USE_LEGACY_PRE_SIRP_AUTH'] = '1'
+  else
+    ENV.delete('FASTLANE_USE_LEGACY_PRE_SIRP_AUTH')
+  end
+  Spaceship::PortalClient.login(APPLE_ID, PASSWORD)
+end
+
+def raw_login_probe
+  # 裸跑一次，把 Apple 的原话、widget key、hashcash 状态都打出来
+  begin
+    probe = Spaceship::PortalClient.new
+    log "PROBE_WIDGET_KEY #{probe.itc_service_key.inspect}"
+  rescue StandardError => e
+    log "PROBE_WIDGET_KEY_FAIL #{e.class}: #{e.message.to_s.lines.first.to_s.strip}"
+  end
+
+  begin
+    probe = Spaceship::PortalClient.new
+    resp = probe.do_sirp(APPLE_ID, PASSWORD, nil)
+    log "PROBE_SIRP status=#{resp.status} body=#{resp.body.to_s[0, 800]}"
+  rescue StandardError => e
+    log "PROBE_SIRP_FAIL #{e.class}: #{e.message.to_s.lines.first.to_s.strip}"
+  end
+
+  begin
+    probe = Spaceship::PortalClient.new
+    ENV['FASTLANE_USE_LEGACY_PRE_SIRP_AUTH'] = '1'
+    resp = probe.perform_login_method(APPLE_ID, PASSWORD, nil)
+    log "PROBE_LEGACY status=#{resp.status} body=#{resp.body.to_s[0, 800]}"
+  rescue StandardError => e
+    log "PROBE_LEGACY_FAIL #{e.class}: #{e.message.to_s.lines.first.to_s.strip}"
+  ensure
+    ENV.delete('FASTLANE_USE_LEGACY_PRE_SIRP_AUTH')
+  end
+end
+
+ENV['SPACESHIP_SKIP_2FA_UPGRADE'] = '1'
+client = nil
+['legacy', 'sirp'].each do |strategy|
+  begin
+    client = login_with_strategy(strategy)
+    log "LOGIN_OK strategy=#{strategy}"
+    break
+  rescue StandardError => e
+    log "LOGIN_FAIL strategy=#{strategy} #{e.class}: #{e.message.to_s.lines.first.to_s.strip}"
+  end
+end
+
+if client.nil?
+  raw_login_probe
+  fail_hard('门户登录失败（两种策略都不行）')
+end
 
 # --------------------------------------------------------------------------
 # 门户原始接口封装
