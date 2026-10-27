@@ -85,11 +85,17 @@ security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN
 
 echo "### [2/5] 查找签名身份"
 IDENTITY=""
+# 先按 codesigning 策略找（Apple 发的证书受信任，会在这里出现）
 IDENTITY=$(security find-identity -v -p codesigning "$KEYCHAIN_DB" 2>/dev/null \
   | sed -n 's/.*"\(.*\)"/\1/p' | head -1) || true
 if [ -z "$IDENTITY" ]; then
+  # 退路：自签证书（自测用）不在 codesigning 策略里，但仍然可以用来签
+  IDENTITY=$(security find-identity -v "$KEYCHAIN_DB" 2>/dev/null \
+    | sed -n 's/.*"\(.*\)"/\1/p' | head -1) || true
+fi
+if [ -z "$IDENTITY" ]; then
   echo "::error::钥匙串里没有可用的签名身份"
-  security find-identity -v -p codesigning "$KEYCHAIN_DB" || true
+  security find-identity -v "$KEYCHAIN_DB" || true
   exit 1
 fi
 echo "### 签名身份：$IDENTITY"
