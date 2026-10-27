@@ -1,6 +1,6 @@
 name: Build iOS App
 
-# 手动触发即可产出一个未签名 .ipa，下载到 Windows 后用 Sideloadly 签名安装。
+# 手动触发即可产出一个 .ipa，下载到 Windows 后用 Sideloadly 签名安装。
 on:
   workflow_dispatch:
     inputs:
@@ -13,12 +13,13 @@ on:
     paths:
       - 'Sources/**'
       - 'project.yml'
+      - '.github/workflows/build-ios.yml'
 
 jobs:
   build:
-    name: Build unsigned .ipa
+    name: Build .ipa
     runs-on: macos-15
-    timeout-minutes: 30
+    timeout-minutes: 40
 
     steps:
       - name: Checkout
@@ -49,51 +50,75 @@ jobs:
         env:
           APP_GROUP_ID: ${{ inputs.app_group_id || vars.APP_GROUP_ID || 'group.com.god.fitstate' }}
         run: |
-          set -uo pipefail
+          set -euo pipefail
           export APP_GROUP_ID
+          echo "APP_GROUP_ID=$APP_GROUP_ID"
 
-          build_app() {
-            xcodebuild \
-              -project FitState.xcodeproj \
-              -scheme FitState \
-              -configuration Release \
-              -sdk iphoneos \
-              -derivedDataPath build \
-              -destination 'generic/platform=iOS' \
-              APP_GROUP_ID="$APP_GROUP_ID" \
-              "$@" \
-              build
-          }
-
-          echo "### 尝试 1：ad-hoc 签名（保留 entitlements，供 Sideloadly 识别 HealthKit / App Group）"
-          if build_app \
-              CODE_SIGN_IDENTITY="-" \
-              CODE_SIGNING_REQUIRED=YES \
-              CODE_SIGNING_ALLOWED=YES \
-              CODE_SIGN_STYLE=Manual \
-              DEVELOPMENT_TEAM="" \
-              PROVISIONING_PROFILE_SPECIFIER="" \
-              > build-adhoc.log 2>&1; then
-            echo "ad-hoc 签名成功"
-          else
-            echo "ad-hoc 签名失败，改用未签名构建"
-            tail -40 build-adhoc.log || true
-            rm -rf build
-            build_app \
-              CODE_SIGN_IDENTITY="" \
-              CODE_SIGNING_REQUIRED=NO \
-              CODE_SIGNING_ALLOWED=NO \
-              CODE_SIGN_ENTITLEMENTS="" \
-              CODE_SIGN_STYLE=Manual \
-              DEVELOPMENT_TEAM="" \
-              PROVISIONING_PROFILE_SPECIFIER="" \
-              > build-unsigned.log 2>&1 || true
-            tail -40 build-unsigned.log || true
+          # 未签名构建。Xcode 26+ 禁止用 ad-hoc 身份签 iOS 设备包
+          # （Ad Hoc code signing is not allowed with SDK 'iOS 26.2'），
+          # 所以这里先出无签名产物，再在下一步用 codesign 手动盖 ad-hoc 签名。
+          set +e
+          xcodebuild \
+            -project FitState.xcodeproj \
+            -scheme FitState \
+            -configuration Release \
+            -sdk iphoneos \
+            -derivedDataPath build \
+            -destination 'generic/platform=iOS' \
+            APP_GROUP_ID="$APP_GROUP_ID" \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGN_STYLE=Manual \
+            DEVELOPMENT_TEAM="" \
+            PROVISIONING_PROFILE_SPECIFIER="" \
+            build > build-unsigned.log 2>&1
+          RC=$?
+          set -e
+          if [ $RC -ne 0 ]; then
+            echo "### 构建失败，日志尾部："
+            tail -60 build-unsigned.log || true
+            echo "::error::xcodebuild 失败"
+            exit 1
           fi
+          tail -5 build-unsigned.log || true
 
-          test -d "build/Build/Products/Release-iphoneos/FitState.app"
-          echo "### 构建产物："
-          ls -la build/Build/Products/Release-iphoneos/
+      - name: Verify and ad-hoc sign
+        env:
+          APP_GROUP_ID: ${{ inputs.app_group_id || vars.APP_GROUP_ID || 'group.com.god.fitstate' }}
+        run: |
+          set -euo pipefail
+          APP_PATH="build/Build/Products/Release-iphoneos/FitState.app"
+
+          # 关键校验：必须有真实二进制，否则打出来的是空壳 ipa
+          if [ ! -f "$APP_PATH/FitState" ]; then
+            echo "::error::主程序二进制 FitState 缺失"
+            exit 1
+          fi
+          if [ ! -d "$APP_PATH/PlugIns/FitStateWidget.appex" ]; then
+            echo "::error::小组件扩展 PlugIns/FitStateWidget.appex 缺失"
+            exit 1
+          fi
+          if [ ! -f "$APP_PATH/PlugIns/FitStateWidget.appex/FitStateWidget" ]; then
+            echo "::error::小组件二进制 FitStateWidget 缺失"
+            exit 1
+          fi
+          echo "### 产物大小："
+          du -sh "$APP_PATH"
+
+          # 把 $(APP_GROUP_ID) 展开成实际值，写进临时 entitlements
+          mkdir -p build/ent
+          sed 's|$(APP_GROUP_ID)|'"$APP_GROUP_ID"'|g' Sources/App/FitState.entitlements > build/ent/app.plist
+          sed 's|$(APP_GROUP_ID)|'"$APP_GROUP_ID"'|g' Sources/Widget/FitStateWidget.entitlements > build/ent/widget.plist
+
+          # 先签内层扩展，再签外层 App
+          codesign --force --sign - --entitlements build/ent/widget.plist \
+            "$APP_PATH/PlugIns/FitStateWidget.appex"
+          codesign --force --sign - --entitlements build/ent/app.plist \
+            "$APP_PATH"
+
+          echo "### 嵌入的 entitlements："
+          codesign -d --entitlements :- "$APP_PATH" || true
 
       - name: Package .ipa
         run: |
@@ -107,6 +132,12 @@ jobs:
           cd build/ipa
           zip -qry FitState.ipa Payload
           ls -lh FitState.ipa
+          # ipa 必须至少几十 KB，空壳说明构建没成功
+          SIZE=$(stat -f%z FitState.ipa)
+          if [ "$SIZE" -lt 50000 ]; then
+            echo "::error::ipa 只有 $SIZE 字节，明显是空壳"
+            exit 1
+          fi
 
       - name: Upload ipa
         uses: actions/upload-artifact@v4
@@ -116,9 +147,12 @@ jobs:
           retention-days: 30
 
       - name: Summary
+        if: always()
         run: |
-          echo "### 构建完成" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "下载 FitState-ipa 制品里的 FitState.ipa，用 Sideloadly 装到 iPhone。" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHITHUB_STEP_SUMMARY
-          echo "如果之后要升级 App Group，请在仓库 Settings → Secrets and variables → Actions 里设置 APP_GROUP_ID 变量。" >> $GITHUB_STEP_SUMMARY
+          {
+            echo "### 构建完成"
+            echo ""
+            echo "下载 FitState-ipa 制品里的 FitState.ipa，用 Sideloadly 装到 iPhone。"
+            echo ""
+            echo "如果之后要升级 App Group，请在仓库 Settings -> Secrets and variables -> Actions 里设置 APP_GROUP_ID 变量。"
+          } >> "${GITHUB_STEP_SUMMARY:-/dev/null}"

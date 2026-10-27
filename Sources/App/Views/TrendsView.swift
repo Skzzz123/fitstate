@@ -116,7 +116,15 @@ struct TrendsView: View {
                 }
             }
             .chartXAxis {
-                dateAxis
+                AxisMarks { value in
+                    AxisValueLabel {
+                        if let date = value.as(Date.self) {
+                            Text(date.formatted(.dateTime.month(.defaultDigits).day()))
+                                .font(.system(size: 10))
+                                .foregroundStyle(Theme.muted)
+                        }
+                    }
+                }
             }
             .frame(height: 190)
         }
@@ -168,7 +176,15 @@ struct TrendsView: View {
                 }
             }
             .chartXAxis {
-                dateAxis
+                AxisMarks { value in
+                    AxisValueLabel {
+                        if let date = value.as(Date.self) {
+                            Text(date.formatted(.dateTime.month(.defaultDigits).day()))
+                                .font(.system(size: 10))
+                                .foregroundStyle(Theme.muted)
+                        }
+                    }
+                }
             }
             .frame(height: 160)
         }
@@ -214,7 +230,15 @@ struct TrendsView: View {
                 }
             }
             .chartXAxis {
-                dateAxis
+                AxisMarks { value in
+                    AxisValueLabel {
+                        if let date = value.as(Date.self) {
+                            Text(date.formatted(.dateTime.month(.defaultDigits).day()))
+                                .font(.system(size: 10))
+                                .foregroundStyle(Theme.muted)
+                        }
+                    }
+                }
             }
             .frame(height: 160)
         }
@@ -304,18 +328,6 @@ struct TrendsView: View {
     }
 
     // MARK: - 坐标轴
-
-    private var dateAxis: some View {
-        AxisMarks { value in
-            AxisValueLabel {
-                if let date = value.as(Date.self) {
-                    Text(date.formatted(.dateTime.month(.defaultDigits).day()))
-                        .font(.system(size: 10))
-                        .foregroundStyle(Theme.muted)
-                }
-            }
-        }
-    }
 
     private func iconName(for kind: Insight.Kind) -> String {
         switch kind {
