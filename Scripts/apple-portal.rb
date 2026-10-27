@@ -587,6 +587,20 @@ else
   end
 end
 
+# App Group 以描述文件里真正授权的那一个为准。
+# 我们申请时写的是 group.<TeamID>.com.god.fitstate，但门户可能给出别的形式，
+# 描述文件里授权的才是 App 运行时能打开的那个。
+granted_groups = manifest['targets'].flat_map do |t|
+  ent = t['entitlements'].is_a?(Hash) ? t['entitlements'] : {}
+  Array(ent['com.apple.security.application-groups'])
+end
+if granted_groups.any? { |g| !g.to_s.empty? }
+  manifest['app_group'] = granted_groups.find { |g| !g.to_s.empty? }
+  log "APP_GROUP_GRANTED #{manifest['app_group']}"
+else
+  log "APP_GROUP_NOT_GRANTED（描述文件里没有 App Groups 权限）"
+end
+
 File.write(File.join(OUT_DIR, 'manifest.json'), JSON.pretty_generate(manifest))
 log "MANIFEST_WRITTEN #{File.join(OUT_DIR, 'manifest.json')}"
 

@@ -120,6 +120,12 @@ jobs:
           OUT_DIR: 'build/portal'
         run: |
           set -euo pipefail
+          if [ -z "${APPLE_ID:-}" ] || [ -z "${APP_SPECIFIC_PASSWORD:-}" ]; then
+            echo "::error::缺少仓库 secrets：APPLE_ID / APP_SPECIFIC_PASSWORD"
+            echo "::error::去 Settings -> Secrets and variables -> Actions 里补上这两个 secret"
+            echo "::error::APP_SPECIFIC_PASSWORD 在 https://appleid.apple.com/account/manage 生成"
+            exit 1
+          fi
           mkdir -p build/portal
           ruby Scripts/apple-portal.rb 2>&1 | tee build/portal/portal.log
           echo "### 门户操作日志结束"
