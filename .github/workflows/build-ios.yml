@@ -105,7 +105,7 @@ jobs:
         run: |
           set -euo pipefail
           gem install fastlane --no-document
-          ruby -e "require 'spaceship'; puts 'SPACESHIP_OK ' + Gem.loaded_specs['spaceship'].version.to_s"
+          ruby -e "require 'spaceship'; puts 'SPACESHIP_OK ' + (defined?(Spaceship::VERSION) ? Spaceship::VERSION.to_s : 'loaded')"
 
       - name: Apple portal operations
         if: env.SIGN_MODE == 'portal'
