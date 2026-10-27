@@ -1,0 +1,71 @@
+name: Toolchain Check
+
+# 单独一个轻量流水线，用来验证「门户直开能力」这条免费路线所依赖的
+# Ruby / spaceship 工具链在 GitHub Actions 上是好的。
+# 不需要任何密钥，随时可以手动触发。
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'Scripts/apple-portal.rb'
+      - 'Scripts/sign-ipa.sh'
+      - '.github/workflows/toolchain-check.yml'
+
+jobs:
+  check:
+    name: Check ruby + spaceship
+    runs-on: macos-15
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.2'
+
+      - name: Install spaceship
+        run: |
+          set -euo pipefail
+          gem install fastlane --no-document
+          ruby -e "require 'spaceship'; puts 'SPACESHIP_OK ' + Gem.loaded_specs['spaceship'].version.to_s"
+
+      - name: Syntax check
+        run: |
+          set -euo pipefail
+          ruby -c Scripts/apple-portal.rb
+          bash -n Scripts/sign-ipa.sh
+          echo "SYNTAX_OK"
+
+      - name: Verify spaceship can talk to the portal API surface
+        run: |
+          set -euo pipefail
+          ruby -e '
+            require "spaceship"
+            # 只做类检查，不联网：确认我们要用的这些接口在当前 spaceship 版本里都存在
+            checks = {
+              "App.find" => Spaceship::Portal::App.respond_to?(:find),
+              "App.create!" => Spaceship::Portal::App.respond_to?(:create!),
+              "App#update_service" => Spaceship::Portal::App.instance_methods.include?(:update_service),
+              "AppGroup.find" => Spaceship::Portal::AppGroup.respond_to?(:find),
+              "AppGroup.create!" => Spaceship::Portal::AppGroup.respond_to?(:create!),
+              "Device.find_by_udid" => Spaceship::Portal::Device.respond_to?(:find_by_udid),
+              "Device.create!" => Spaceship::Portal::Device.respond_to?(:create!),
+              "Certificate.create!" => Spaceship::Portal::Certificate.respond_to?(:create!),
+              "CSR" => Spaceship::Portal::Certificate.respond_to?(:create_certificate_signing_request),
+              "ProvisioningProfile.create!" => Spaceship::Portal::ProvisioningProfile.respond_to?(:create!),
+              "HealthKit service" => !Spaceship::Portal::AppService::HealthKit.nil?,
+              "AppGroup service" => !Spaceship::Portal::AppService::AppGroup.nil?
+            }
+            bad = checks.reject { |_, ok| ok }.keys
+            if bad.empty?
+              puts "API_SURFACE_OK"
+            else
+              puts "API_SURFACE_MISSING: " + bad.join(", ")
+              exit 1
+            end
+          '

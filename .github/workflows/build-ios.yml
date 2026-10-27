@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
     inputs:
       sign_mode:
-        description: '签名模式：adhoc（免费档，仅验证 UI）/ apple（ADP 正规签名，装机用这个）'
+        description: '签名模式：adhoc（免费档，仅验证 UI）/ portal（免费档 + 门户直开能力，正签）/ apple（ADP 正规签名）'
         required: false
         default: 'adhoc'
       app_group_id:
@@ -86,6 +86,44 @@ jobs:
           echo "### Team ID = $TEAM_ID"
           echo "### 目标 bundle id = $FINAL_BUNDLE_ID"
           echo "### 设备 UDID = $DEVICE_UDID"
+
+      # ---------------------------------------------------------------------
+      # portal 模式：免费个人团队路线
+      #
+      # 直接调 Apple 开发者门户接口（spaceship），给 App ID 开启 HealthKit /
+      # App Groups 能力，再申请带这些能力的开发证书与描述文件，自己给 App 正签。
+      # 全程不需要 Apple Developer Program。
+      # ---------------------------------------------------------------------
+      - name: Set up Ruby
+        if: env.SIGN_MODE == 'portal'
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.2'
+
+      - name: Install spaceship
+        if: env.SIGN_MODE == 'portal'
+        run: |
+          set -euo pipefail
+          gem install fastlane --no-document
+          ruby -e "require 'spaceship'; puts 'SPACESHIP_OK ' + Gem.loaded_specs['spaceship'].version.to_s"
+
+      - name: Apple portal operations
+        if: env.SIGN_MODE == 'portal'
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APP_SPECIFIC_PASSWORD: ${{ secrets.APP_SPECIFIC_PASSWORD }}
+          TEAM_ID: ${{ inputs.team_id || vars.TEAM_ID || '97792VH57A' }}
+          DEVICE_UDID: ${{ inputs.device_udid || vars.DEVICE_UDID || '00008140-00166C2636D2801C' }}
+          APP_GROUP_ID: ${{ inputs.app_group_id || vars.APP_GROUP_ID || 'group.com.god.fitstate' }}
+          TARGET_APP_BUNDLE_ID: 'com.god.fitstate'
+          TARGET_WIDGET_BUNDLE_ID: 'com.god.fitstate.widget'
+          OUT_DIR: 'build/portal'
+        run: |
+          set -euo pipefail
+          mkdir -p build/portal
+          ruby Scripts/apple-portal.rb 2>&1 | tee build/portal/portal.log
+          echo "### 门户操作日志结束"
+          cat build/portal/manifest.json
 
       # ---------------------------------------------------------------------
       # apple 模式：准备 App Store Connect API Key
@@ -256,7 +294,7 @@ jobs:
           codesign -d --entitlements :- "$APP_PATH" || true
 
       - name: Verify and ad-hoc sign
-        if: env.SIGN_MODE != 'apple'
+        if: env.SIGN_MODE == 'adhoc'
         run: |
           set -euo pipefail
           APP_PATH="build/Build/Products/Release-iphoneos/FitState.app"
@@ -279,7 +317,7 @@ jobs:
       # adhoc 模式：自造一份描述文件给签名工具看
       # ---------------------------------------------------------------------
       - name: Embed provisioning profile hint
-        if: env.SIGN_MODE != 'apple'
+        if: env.SIGN_MODE == 'adhoc'
         run: |
           set -euo pipefail
           APP_PATH="build/Build/Products/Release-iphoneos/FitState.app"
@@ -356,6 +394,19 @@ jobs:
           echo "### embedded.mobileprovision 大小："
           ls -l "$APP_PATH/embedded.mobileprovision"
 
+      # ---------------------------------------------------------------------
+      # portal 模式：用我们自己申请的证书 + 描述文件正签
+      # ---------------------------------------------------------------------
+      - name: Sign with our own certificate and profile
+        if: env.SIGN_MODE == 'portal'
+        run: |
+          set -euo pipefail
+          bash Scripts/sign-ipa.sh 2>&1 | tee build/sign.log
+          if ! grep -q "SIGN_OK" build/sign.log; then
+            echo "::error::签名流程没有成功"
+            exit 1
+          fi
+
       - name: Package .ipa
         run: |
           set -euo pipefail
@@ -389,6 +440,11 @@ jobs:
             if [ "$SIGN_MODE" = "apple" ]; then
               echo "下载 FitState-ipa 制品里的 FitState.ipa。"
               echo "这是 Apple 正签的包，**不要**再用 Sideloadly 装（它会重签并抹掉能力），"
+              echo "请用 Apple Configurator 2 / Apple Devices / iMazing 安装。"
+            elif [ "$SIGN_MODE" = "portal" ]; then
+              echo "下载 FitState-ipa 制品里的 FitState.ipa。"
+              echo "这是用免费个人团队在门户直开 HealthKit / App Groups 后自己签的包，"
+              echo "**不要**再用 Sideloadly 装（它会重签并抹掉能力），"
               echo "请用 Apple Configurator 2 / Apple Devices / iMazing 安装。"
             else
               echo "下载 FitState-ipa 制品里的 FitState.ipa，用 Sideloadly 装到 iPhone。"
