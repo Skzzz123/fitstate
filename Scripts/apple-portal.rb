@@ -95,39 +95,66 @@ def candidate_identifiers(base, team_id)
   list
 end
 
-def find_app(apps, base, team_id)
+def find_app(apps, base, team_id, must_include: nil, must_exclude: nil)
   cands = candidate_identifiers(base, team_id)
   apps.each do |a|
     ident = a.bundle_id.to_s
     return a if cands.include?(ident)
+    next unless ident.include?(base)
+    next if must_exclude && ident.include?(must_exclude)
+    next if must_include && !ident.include?(must_include)
+    # 门户里同一个 App 可能有前缀/后缀几种写法，取最像的那个
+    return a
   end
-  # 退一步：只要 identifier 里包含我们的基名就算
-  apps.find { |a| a.bundle_id.to_s.include?(base) }
+  nil
 end
 
-def ensure_app(apps, base, team_id, display_name)
-  existing = find_app(apps, base, team_id)
+# spaceship 自带的 App.create! 会顺带勾上 IAP 与 Game Center，
+# 而免费个人团队没有这两项能力，Apple 会直接拒掉。
+# 所以这里直接调门户接口，只带必要的字段。
+def create_app_minimal(client, bundle_id, name)
+  resp = client.request(:post, 'account/ios/identifiers/addAppId.action', {
+    name: name,
+    teamId: client.team_id,
+    type: 'explicit',
+    identifier: bundle_id
+  })
+  data = client.parse_response(resp, 'appId')
+  Spaceship::Portal::App.new(data)
+end
+
+def ensure_app(client, apps, base, team_id, display_name, must_include: nil, must_exclude: nil)
+  existing = find_app(apps, base, team_id, must_include: must_include, must_exclude: must_exclude)
   if existing
     log "APPID_FOUND #{base} -> #{existing.bundle_id} (id=#{existing.app_id})"
     return existing
   end
 
   candidate_identifiers(base, team_id).each do |ident|
+    created = nil
     begin
       created = Spaceship::Portal::App.create!(bundle_id: ident, name: display_name, mac: false)
+    rescue StandardError => e
+      log "APPID_CREATE_FAIL(spaceship) #{ident} #{e.class}: #{e.message.to_s.lines.first.to_s.strip}"
+      begin
+        created = create_app_minimal(client, ident, display_name)
+      rescue StandardError => e2
+        log "APPID_CREATE_FAIL(minimal) #{ident} #{e2.class}: #{e2.message.to_s.lines.first.to_s.strip}"
+        next
+      end
+    end
+    if created
       log "APPID_CREATED #{base} -> #{created.bundle_id} (id=#{created.app_id})"
       apps << created
       return created
-    rescue StandardError => e
-      log "APPID_CREATE_FAIL #{ident} #{e.class}: #{e.message.to_s.lines.first.to_s.strip}"
     end
   end
   log "APPID_MISSING #{base}"
   nil
 end
 
-app    = ensure_app(apps, APP_BUNDLE,    TEAM_ID, 'FitState')
-widget = ensure_app(apps, WIDGET_BUNDLE, TEAM_ID, 'FitState Widget')
+app    = ensure_app(client, apps, APP_BUNDLE,    TEAM_ID, 'FitState',      must_exclude: 'widget')
+widget = ensure_app(client, apps, WIDGET_BUNDLE, TEAM_ID, 'FitState Widget', must_include: 'widget')
 fail_hard("找不到主 App 的 App ID（#{APP_BUNDLE}）") if app.nil?
 
 # --------------------------------------------------------------------------
