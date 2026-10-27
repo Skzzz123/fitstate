@@ -77,10 +77,16 @@ HealthKit 那一行在 ADP / ADEP / Apple Developer（免费）三列全是 ✅�
 1. **不用碰开发者门户**，直接跳到第四步编译。
 2. 编译时 App Group ID 先用占位值 `group.com.god.fitstate`；
    真正生效的组名在签名阶段由工具补上 Team ID 前缀。
-3. 用 Sideloadly 装完之后，Windows 证书库里会出现它自动创建的「Apple Development」证书，
-   **证书主体里就带 10 位 Team ID**（形如 `ABCDE12345`）。
-4. 如果小组件显示「打开 App 完成授权」，就用
-   `group.<TeamID>.com.god.fitstate` 重新编译一次、重新安装即可。
+3. **Team ID 从哪来**：签名工具给免费个人团队生成 id 时，规则是
+   `<原 bundle id>.<TeamID>`（Xcode 也是这个规则）。所以装完之后看
+   Sideloadly 实际装上去的 bundle id 就知道了——
+   本机实测是 `com.god.fitstate.97792VH57A`，那 **Team ID 就是 `97792VH57A`**，
+   对应的 App Group 是 `group.97792VH57A.com.god.fitstate`。
+   > 注意：Windows 证书库里**看不到**这个 Team ID。Sideloadly 只在门户侧
+   > 临时建证书，不往本机证书库写，所以别指望从证书主体里翻。
+4. 编译时把 `app_group_runtime_id` 传成 `group.<TeamID>.com.god.fitstate`
+   重新出包、重新安装即可。App 里的 `AppGroup.swift` 还会在运行时
+   自动探测（从自己的 bundle id 里认出 Team ID），即使参数填错也能兜底。
 
 ### 3.2 路线 B：付费账号（$99/年，更省心）
 
@@ -110,11 +116,16 @@ HealthKit 那一行在 ADP / ADEP / Apple Developer（免费）三列全是 ✅�
 解压得到 `FitState.ipa`。
 
 **手动触发**：Actions → 左边选 **Build iOS App** → 右边 **Run workflow**，
-可以在 `app_group_id` 里指定 App Group ID（不填就用默认的 `group.com.god.fitstate`）。
+有两个输入：
+
+| 输入 | 含义 | 免费账号填什么 |
+|---|---|---|
+| `app_group_id` | 编译时**向 Apple 声明**的组（写进 entitlements） | 保持默认 `group.com.god.fitstate` |
+| `app_group_runtime_id` | 运行时**真正去查容器**的组（写进 Info.plist） | `group.<你的TeamID>.com.god.fitstate` |
 
 > 想让以后每次 push 都自动用上你的 App Group ID：
 > 仓库 **Settings → Secrets and variables → Actions** 里加一个 **Variables**（不是 Secrets），
-> 名字叫 `APP_GROUP_ID`，值填你的 App Group ID。
+> 名字叫 `APP_GROUP_ID`（声明用）和 `APP_GROUP_RUNTIME_ID`（运行时用），值填你的 App Group ID。
 
 ### 4.2 这条流水线具体做了什么（以及为什么）
 
@@ -232,10 +243,17 @@ A：九成是权限没给。检查「设置 → 隐私与安全性 → 健康 �
 另外确认昨晚戴了表并且开了睡眠监测。
 
 **Q：小组件一直显示「打开 App 完成授权」**
-A：小组件靠 App Group 共享数据。先确认 App Group ID 和第三步注册的是同一个：
-- 编译时传的 `app_group_id` 必须等于门户里建的组名
-- 门户里的 App ID 必须勾选了 App Groups 并挂上了那个组
-- 改完重新编译、重新安装，然后**打开一次 App**
+A：小组件靠 App Group 共享数据。先打开 App → 设置页最下面，看 **共享容器** 那一行：
+
+- 显示「可用」→ App Group 是好的，问题在 App 还没刷新过；**打开一次 App** 让它写快照即可。
+- 显示「不可用」→ App Group ID 对不上。核对两处：
+  - 编译时 `app_group_runtime_id` 传的是 `group.<你的TeamID>.com.god.fitstate`
+  - 你的 Team ID 就是签名工具改写后 bundle id 的最后一段
+    （例如装上去是 `com.god.fitstate.97792VH57A` → Team ID 是 `97792VH57A`）
+- 改完重新编译、重新安装，然后**打开一次 App**。
+
+> App 里「设置 → 关于」会直接显示当前生效的 App Group 和 Bundle ID，
+> 截图这两行就能一眼看出问题在哪。
 
 **Q：没有睡眠分期（深睡/REM 都是 0）**
 A：Apple Watch 需要 watchOS 9 或更高才会写睡眠分期。另外确认「设置 → 通用 → 锁定屏幕」里
