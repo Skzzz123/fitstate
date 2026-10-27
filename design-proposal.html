@@ -1,0 +1,702 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>「状态」健身准备度 App · 设计方案</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=Outfit:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<style>
+  :root{
+    --bg:#f7f5f0; --surface:#ffffff; --line:#e9e3d6; --line-soft:#f1ece1;
+    --ink:#14171e; --body:#3a4256; --muted:#7c7a72;
+    --primary:#2f6f5e; --primary-soft:#2f6f5e14;
+    --warn:#c97b3f; --rose:#b06367;
+    --band-1:#2f6f5e; --band-2:#4f9077; --band-3:#c97b3f; --band-4:#c0704a; --band-5:#b06367;
+  }
+  html{scroll-behavior:smooth}
+  body{background:var(--bg); color:var(--body); font-family:'Outfit',system-ui,sans-serif; font-size:15px; line-height:1.62; -webkit-font-smoothing:antialiased}
+  .font-serif{font-family:'DM Serif Display',Georgia,serif}
+  .font-mono{font-family:'JetBrains Mono',monospace}
+  .wrap{max-width:1080px;margin:0 auto;padding:0 24px}
+  section{scroll-margin-top:24px}
+
+  /* ---------- Phone frame ---------- */
+  .phone{width:296px;height:606px;border-radius:46px;background:#101013;border:9px solid #101013;box-shadow:0 22px 50px -18px rgba(20,23,30,.42),0 4px 12px rgba(20,23,30,.14);position:relative;overflow:hidden;flex:none}
+  .phone::after{content:"";position:absolute;inset:0;border-radius:38px;border:1px solid #26262b;pointer-events:none}
+  .island{position:absolute;top:11px;left:50%;transform:translateX(-50%);width:88px;height:24px;background:#000;border-radius:14px;z-index:5}
+  .screen{position:absolute;inset:0;border-radius:38px;overflow:hidden;background:#fbfaf7;display:flex;flex-direction:column}
+  .statusbar{display:flex;justify-content:space-between;align-items:center;padding:12px 22px 2px;font-size:11.5px;font-weight:600;color:#14171e;font-family:'JetBrains Mono',monospace}
+  .homebar{position:absolute;bottom:7px;left:50%;transform:translateX(-50%);width:118px;height:4px;border-radius:2px;background:#14171e;opacity:.28;z-index:6}
+
+  /* ---------- Widgets ---------- */
+  .widget{background:linear-gradient(160deg,#fffefb,#f6f2e9);border-radius:22px;border:1px solid #e4ddcd;box-shadow:0 6px 18px -8px rgba(20,23,30,.22);position:relative;overflow:hidden}
+  .widget::before{content:"";position:absolute;width:150px;height:150px;right:-46px;top:-58px;border-radius:50%;background:var(--primary);opacity:.05}
+  .widget-s{width:158px;height:158px;padding:14px}
+  .widget-m{width:338px;height:158px;padding:15px 18px;display:flex;gap:16px;align-items:center}
+
+  /* ---------- generic ---------- */
+  .card{background:var(--surface);border:1px solid var(--line);border-radius:16px;box-shadow:0 2px 8px rgba(0,0,0,.04)}
+  .hairline{height:1px;background:var(--line-soft)}
+  .pill{display:inline-flex;align-items:center;gap:6px;padding:4px 11px;border-radius:999px;font-size:12.5px;font-weight:500}
+  .bench{display:grid;grid-template-columns:132px 1fr 58px;gap:12px;align-items:center;padding:5px 0}
+  .bench-track{height:9px;background:var(--line-soft);border-radius:5px;overflow:hidden}
+  .bench-fill{height:100%;border-radius:5px}
+  .kv{display:grid;grid-template-columns:118px 1fr;row-gap:9px;column-gap:16px;margin:0}
+  .kv dt{color:var(--muted);border-bottom:1px dashed var(--line);padding-bottom:8px;font-size:13.5px}
+  .kv dd{margin:0;border-bottom:1px dashed var(--line);padding-bottom:8px;font-size:13.5px;color:var(--ink)}
+  table{border-collapse:collapse;width:100%}
+  th,td{text-align:left;padding:10px 12px;border-bottom:1px solid var(--line-soft);font-size:13.5px;vertical-align:top}
+  th{color:var(--muted);font-weight:500;font-size:12.5px;letter-spacing:.03em;text-transform:uppercase}
+  td{color:var(--body)}
+  td.num{font-family:'JetBrains Mono',monospace;color:var(--ink);white-space:nowrap}
+  .tag{font-size:11.5px;font-weight:600;padding:2px 8px;border-radius:6px;display:inline-block}
+  .flowbox{background:#fff;border:1px solid var(--line);border-radius:13px;padding:13px 15px;text-align:center}
+  .flowarrow{display:flex;align-items:center;justify-content:center;color:#c3bcac}
+  .axis-note{font-size:12px;color:var(--muted)}
+</style>
+</head>
+<body>
+
+<div class="wrap">
+
+<!-- ===================== HERO ===================== -->
+<header class="pt-14 pb-12">
+  <div class="flex items-center gap-2.5 mb-7">
+    <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="var(--primary)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+    <span class="text-[12.5px] tracking-[.16em] uppercase font-mono" style="color:var(--muted)">Design Proposal · v1</span>
+  </div>
+
+  <h1 class="font-serif text-[38px] md:text-[46px] leading-[1.15] tracking-[-.01em] mb-5" style="color:var(--ink)">
+    「状态」— 用睡眠和 HRV 回答<br>今天该不该练
+  </h1>
+
+  <p class="text-[16px] md:text-[17px] max-w-[62ch] mb-8" style="color:var(--body)">
+    一款纯本地、只给自己用的 iOS App。数据来自 Apple Watch 同步进「健康」的睡眠分期、HRV 与静息心率，
+    用<b style="color:var(--ink)">个人 30 天基线</b>做对照，算出今天的准备度分数与训练建议。
+    不联网、不登录、不上传，全部数据留在手机里。
+  </p>
+
+  <div class="grid md:grid-cols-3 gap-4 mb-12">
+    <div class="card p-5">
+      <div class="text-[12px] font-mono mb-2" style="color:var(--muted)">今日状态</div>
+      <div class="font-serif text-[46px] leading-none mb-1" style="color:var(--band-3)">61</div>
+      <div class="text-[13.5px]">睡眠很好，但 <b style="color:var(--ink)">HRV 比基线低 8.7%</b> — 建议降强度</div>
+    </div>
+    <div class="card p-5">
+      <div class="text-[12px] font-mono mb-2" style="color:var(--muted)">判定逻辑</div>
+      <div class="text-[13.5px] space-y-1.5">
+        <div>睡眠 <b class="font-mono" style="color:var(--ink)">89</b> × 35%</div>
+        <div>HRV <b class="font-mono" style="color:var(--ink)">36</b> × 40%</div>
+        <div>静息心率 <b class="font-mono" style="color:var(--ink)">60</b> × 25%</div>
+      </div>
+    </div>
+    <div class="card p-5">
+      <div class="text-[12px] font-mono mb-2" style="color:var(--muted)">落地前提</div>
+      <div class="text-[13.5px]">你<b style="color:var(--ink)">没有 Mac</b>。已选定一条零 Mac 的编译/安装路径，见文末对比。</div>
+    </div>
+  </div>
+</header>
+
+<!-- ===================== 已确定 ===================== -->
+<section class="pb-14">
+  <h2 class="font-serif text-[27px] mb-1" style="color:var(--ink)">已经敲定的四件事</h2>
+  <p class="text-[14px] mb-7" style="color:var(--muted)">来自你的回答，后面所有设计都基于这些前提。</p>
+
+  <div class="grid md:grid-cols-2 gap-x-12 gap-y-0">
+    <dl class="kv">
+      <dt>数据来源</dt><dd>Apple Watch →「健康」App，睡眠分期 / HRV / 静息心率齐全</dd>
+      <dt>呈现形态</dt><dd>综合分 0–100 <b>＋</b> 分维度明细（可展开看每一项贡献）</dd>
+      <dt>出现位置</dt><dd>主屏小组件 ＋ 周/月趋势图</dd>
+      <dt>编译环境</dt><dd>无 Mac，走 macOS 云端编译 + Windows 侧安装</dd>
+    </dl>
+    <div class="card p-6 mt-6 md:mt-0" style="background:var(--primary-soft); border-color:#d5e5df">
+      <div class="flex gap-3">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--primary)" stroke-width="2" stroke-linecap="round" style="flex:none;margin-top:2px"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
+        <div class="text-[13.5px]">
+          <b style="color:var(--ink)">关键前提已核实</b><br>
+          Apple 现行能力矩阵中，<b style="color:var(--ink)">HealthKit</b> 与 <b style="color:var(--ink)">App Groups</b> 两项 capability
+          已对<b style="color:var(--ink)">免费 Apple 账号</b>开放（同表中的 Push、iCloud、IAP 仍为付费档专属）。
+          这意味着小组件 + 健康数据这条路线<strong style="color:var(--primary)">不必先付 99 美元</strong>就能跑通。
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== MOCKUP ===================== -->
+<section id="mockup" class="pb-14">
+  <h2 class="font-serif text-[27px] mb-1" style="color:var(--ink)">界面草图</h2>
+  <p class="text-[14px] mb-8" style="color:var(--muted)">左：今日页（主界面）· 中：趋势页 · 下：主屏小组件两个尺寸。以下为视觉方向稿，比例与配色待你定。</p>
+
+  <div class="grid lg:grid-cols-[300px_300px_1fr] gap-8 items-start mb-10">
+
+    <!-- ===== PHONE 1: TODAY ===== -->
+    <div>
+      <div class="text-[12px] font-mono mb-3" style="color:var(--muted)">① 今日页</div>
+      <div class="phone">
+        <div class="island"></div>
+        <div class="screen">
+          <div class="statusbar"><span>7:41</span><span>●●● ⌁ ▮</span></div>
+          <div class="px-5 pt-3 pb-4" style="border-bottom:1px solid #eeeadf">
+            <div class="flex justify-between items-end">
+              <div>
+                <div class="text-[11px] font-mono" style="color:#a09a8d">10月27日 周一</div>
+                <div class="text-[20px] font-semibold leading-tight" style="color:#14171e">今天状态</div>
+              </div>
+              <div class="text-[10px] px-2 py-1 rounded-md" style="background:#f0ece1;color:#7c7a72">基线 n=30</div>
+            </div>
+          </div>
+
+          <!-- score ring -->
+          <div class="flex flex-col items-center pt-5 pb-3">
+            <div class="relative" style="width:148px;height:148px">
+              <svg viewBox="0 0 148 148" width="148" height="148">
+                <circle cx="74" cy="74" r="62" fill="none" stroke="#eee9dd" stroke-width="11"/>
+                <circle cx="74" cy="74" r="62" fill="none" stroke="#c97b3f" stroke-width="11" stroke-linecap="round"
+                        stroke-dasharray="389.6" stroke-dashoffset="152" transform="rotate(-90 74 74)"/>
+              </svg>
+              <div class="absolute inset-0 flex flex-col items-center justify-center">
+                <div class="font-serif leading-none" style="font-size:52px;color:#14171e">61</div>
+                <div class="text-[12px] mt-0.5" style="color:#7c7a72">一般 · 建议降强度</div>
+              </div>
+            </div>
+            <div class="mt-3 px-3.5 py-1.5 rounded-lg text-[12px] text-center leading-snug" style="background:#fdf4ea;color:#8a5a2c;max-width:250px">
+              睡眠达标，但 HRV 比基线低 8.7%，<br>自主神经恢复还没跟上
+            </div>
+          </div>
+
+          <!-- metrics -->
+          <div class="px-5 space-y-2.5">
+            <div class="text-[11px] font-mono mb-1" style="color:#a09a8d">为什么是 61 分 · 点开看明细</div>
+
+            <div class="rounded-xl p-3" style="background:#fff;border:1px solid #eee9dd">
+              <div class="flex justify-between items-center mb-1.5">
+                <span class="text-[12.5px] font-medium" style="color:#14171e">睡眠</span>
+                <span class="text-[11px] font-mono" style="color:#7c7a72">7h52m · 深睡 1h06m</span>
+              </div>
+              <div class="flex items-center gap-2">
+                <div class="flex-1 h-[6px] rounded-full" style="background:#f1ece1">
+                  <div class="h-full rounded-full" style="width:89%;background:#2f6f5e"></div>
+                </div>
+                <span class="font-mono text-[12px]" style="color:#14171e">89</span>
+              </div>
+              <div class="text-[10.5px] mt-1.5 font-mono" style="color:#9a9487">效率 91% · REM 1h42m · 贡献 +13.7</div>
+            </div>
+
+            <div class="rounded-xl p-3" style="background:#fff;border:1px solid #e9c9a8">
+              <div class="flex justify-between items-center mb-1.5">
+                <span class="text-[12.5px] font-medium" style="color:#14171e">HRV (SDNN)</span>
+                <span class="text-[11px] font-mono" style="color:#b06367">42ms · 基线 46ms</span>
+              </div>
+              <div class="flex items-center gap-2">
+                <div class="flex-1 h-[6px] rounded-full" style="background:#f1ece1">
+                  <div class="h-full rounded-full" style="width:36%;background:#c0704a"></div>
+                </div>
+                <span class="font-mono text-[12px]" style="color:#14171e">36</span>
+              </div>
+              <div class="text-[10.5px] mt-1.5 font-mono" style="color:#b06367">↓ 8.7% vs 基线 · 主要拖累项 · 贡献 −5.6</div>
+            </div>
+
+            <div class="rounded-xl p-3" style="background:#fff;border:1px solid #eee9dd">
+              <div class="flex justify-between items-center mb-1.5">
+                <span class="text-[12.5px] font-medium" style="color:#14171e">静息心率</span>
+                <span class="text-[11px] font-mono" style="color:#7c7a72">57 bpm · 基线 58</span>
+              </div>
+              <div class="flex items-center gap-2">
+                <div class="flex-1 h-[6px] rounded-full" style="background:#f1ece1">
+                  <div class="h-full rounded-full" style="width:60%;background:#c97b3f"></div>
+                </div>
+                <span class="font-mono text-[12px]" style="color:#14171e">60</span>
+              </div>
+              <div class="text-[10.5px] mt-1.5 font-mono" style="color:#9a9487">↓ 1.7% vs 基线 · 贡献 +2.5</div>
+            </div>
+          </div>
+
+          <!-- intensity -->
+          <div class="mt-auto px-5 pb-7 pt-3">
+            <div class="text-[11px] font-mono mb-2" style="color:#a09a8d">今天怎么练</div>
+            <div class="grid grid-cols-4 gap-1.5">
+              <div class="rounded-lg py-2 text-center text-[11px]" style="background:#f1ece1;color:#a09a8d">高强度</div>
+              <div class="rounded-lg py-2 text-center text-[11px] font-medium" style="background:#fdf4ea;color:#8a5a2c;border:1px solid #e9c9a8">中强度</div>
+              <div class="rounded-lg py-2 text-center text-[11px]" style="background:#f1ece1;color:#7c7a72">轻量</div>
+              <div class="rounded-lg py-2 text-center text-[11px]" style="background:#f1ece1;color:#7c7a72">休息</div>
+            </div>
+            <div class="text-[10px] mt-2 text-center font-mono" style="color:#b0a99a">点一下即写入「健康」，用于趋势关联</div>
+          </div>
+        </div>
+        <div class="homebar"></div>
+      </div>
+    </div>
+
+    <!-- ===== PHONE 2: TRENDS ===== -->
+    <div>
+      <div class="text-[12px] font-mono mb-3" style="color:var(--muted)">② 趋势页</div>
+      <div class="phone">
+        <div class="island"></div>
+        <div class="screen">
+          <div class="statusbar"><span>7:41</span><span>●●● ⌁ ▮</span></div>
+          <div class="px-5 pt-3 pb-4" style="border-bottom:1px solid #eeeadf">
+            <div class="flex justify-between items-end">
+              <div>
+                <div class="text-[11px] font-mono" style="color:#a09a8d">最近 30 天</div>
+                <div class="text-[20px] font-semibold leading-tight" style="color:#14171e">趋势</div>
+              </div>
+              <div class="flex gap-1 text-[10px]">
+                <div class="px-2 py-1 rounded-md font-medium" style="background:#14171e;color:#fff">周</div>
+                <div class="px-2 py-1 rounded-md" style="background:#f0ece1;color:#7c7a72">月</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="px-5 pt-4">
+            <div class="text-[12px] font-medium mb-2" style="color:#14171e">状态分</div>
+            <div style="height:118px"><canvas id="miniChart"></canvas></div>
+          </div>
+
+          <div class="px-5 mt-3">
+            <div class="text-[12px] font-medium mb-2" style="color:#14171e">睡眠时长 vs 次日 HRV 变化</div>
+            <div style="height:124px"><canvas id="miniScatter"></canvas></div>
+          </div>
+
+          <div class="px-5 mt-4">
+            <div class="rounded-xl p-3.5" style="background:#fff;border:1px solid #eee9dd">
+              <div class="flex items-center gap-1.5 mb-2">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--primary)" stroke-width="2.2" stroke-linecap="round"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7V17h8v-2.3A7 7 0 0 0 12 2z"/></svg>
+                <span class="text-[11.5px] font-semibold" style="color:var(--primary)">发现</span>
+              </div>
+              <div class="text-[12px] leading-relaxed" style="color:#3a4256">
+                过去 30 天里，<b style="color:#14171e">睡不满 6 小时的 5 个夜晚</b>，
+                次日 HRV 平均比基线低 <b style="color:#b06367">11%</b>；睡满 7.5 小时的夜晚，次日状态分平均高 <b style="color:#2f6f5e">14 分</b>。
+              </div>
+            </div>
+          </div>
+
+          <div class="mt-auto px-5 pb-7 pt-4">
+            <div class="grid grid-cols-3 gap-2 text-center">
+              <div class="rounded-lg py-2" style="background:#f4f1e9">
+                <div class="font-mono text-[15px]" style="color:#14171e">72</div><div class="text-[10px]" style="color:#7c7a72">平均分</div>
+              </div>
+              <div class="rounded-lg py-2" style="background:#f4f1e9">
+                <div class="font-mono text-[15px]" style="color:#14171e">4</div><div class="text-[10px]" style="color:#7c7a72">低分日</div>
+              </div>
+              <div class="rounded-lg py-2" style="background:#f4f1e9">
+                <div class="font-mono text-[15px]" style="color:#14171e">11</div><div class="text-[10px]" style="color:#7c7a72">已训练</div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="homebar"></div>
+      </div>
+    </div>
+
+    <!-- ===== WIDGETS + notes ===== -->
+    <div>
+      <div class="text-[12px] font-mono mb-3" style="color:var(--muted)">③ 主屏小组件</div>
+      <div class="flex gap-4 flex-wrap mb-6">
+        <div>
+          <div class="widget widget-s">
+            <div class="flex items-center gap-2.5">
+              <div class="relative" style="width:52px;height:52px;flex:none">
+                <svg viewBox="0 0 60 60" width="52" height="52">
+                  <circle cx="30" cy="30" r="25" fill="none" stroke="#ece7da" stroke-width="6"/>
+                  <circle cx="30" cy="30" r="25" fill="none" stroke="#c97b3f" stroke-width="6" stroke-linecap="round" stroke-dasharray="157" stroke-dashoffset="61" transform="rotate(-90 30 30)"/>
+                </svg>
+                <div class="absolute inset-0 flex items-center justify-center font-mono" style="font-size:17px;color:#14171e">61</div>
+              </div>
+              <div>
+                <div class="text-[12.5px] font-semibold leading-tight" style="color:#14171e">一般</div>
+                <div class="text-[11px] leading-tight mt-0.5" style="color:#7c7a72">建议中强度</div>
+                <div class="text-[9.5px] font-mono mt-1" style="color:#a9a294">10:27 更新</div>
+              </div>
+            </div>
+          </div>
+          <div class="text-[11px] mt-2 font-mono" style="color:var(--muted)">systemSmall · 158×158</div>
+        </div>
+
+        <div>
+          <div class="widget widget-m">
+            <div class="relative" style="width:76px;height:76px;flex:none">
+              <svg viewBox="0 0 90 90" width="76" height="76">
+                <circle cx="45" cy="45" r="37" fill="none" stroke="#ece7da" stroke-width="8"/>
+                <circle cx="45" cy="45" r="37" fill="none" stroke="#c97b3f" stroke-width="8" stroke-linecap="round" stroke-dasharray="232.5" stroke-dashoffset="90.7" transform="rotate(-90 45 45)"/>
+              </svg>
+              <div class="absolute inset-0 flex flex-col items-center justify-center">
+                <div class="font-serif leading-none" style="font-size:26px;color:#14171e">61</div>
+                <div class="text-[8.5px]" style="color:#7c7a72">一般</div>
+              </div>
+            </div>
+            <div class="flex-1 min-w-0">
+              <div class="text-[13px] font-semibold mb-2" style="color:#14171e">今天建议降强度</div>
+              <div class="space-y-1.5">
+                <div class="flex items-center gap-2">
+                  <span class="text-[10.5px] w-11" style="color:#7c7a72">睡眠</span>
+                  <div class="flex-1 h-[5px] rounded-full" style="background:#f1ece1"><div class="h-full rounded-full" style="width:89%;background:#2f6f5e"></div></div>
+                  <span class="font-mono text-[10px]" style="color:#14171e">89</span>
+                </div>
+                <div class="flex items-center gap-2">
+                  <span class="text-[10.5px] w-11" style="color:#7c7a72">HRV</span>
+                  <div class="flex-1 h-[5px] rounded-full" style="background:#f1ece1"><div class="h-full rounded-full" style="width:36%;background:#c0704a"></div></div>
+                  <span class="font-mono text-[10px]" style="color:#14171e">36</span>
+                </div>
+                <div class="flex items-center gap-2">
+                  <span class="text-[10.5px] w-11" style="color:#7c7a72">心率</span>
+                  <div class="flex-1 h-[5px] rounded-full" style="background:#f1ece1"><div class="h-full rounded-full" style="width:60%;background:#c97b3f"></div></div>
+                  <span class="font-mono text-[10px]" style="color:#14171e">60</span>
+                </div>
+              </div>
+              <div class="text-[10px] mt-2" style="color:#8a5a2c">HRV 比基线低 8.7%</div>
+            </div>
+          </div>
+          <div class="text-[11px] mt-2 font-mono" style="color:var(--muted)">systemMedium · 338×158</div>
+        </div>
+      </div>
+
+      <div class="card p-5">
+        <div class="text-[12.5px] font-semibold mb-3" style="color:var(--ink)">视觉方向 · 三档可选</div>
+        <div class="space-y-2.5">
+          <div class="flex items-center gap-3">
+            <div class="flex gap-1">
+              <span style="width:22px;height:22px;border-radius:6px;background:#2f6f5e"></span>
+              <span style="width:22px;height:22px;border-radius:6px;background:#c97b3f"></span>
+              <span style="width:22px;height:22px;border-radius:6px;background:#b06367"></span>
+            </div>
+            <div class="text-[12.5px]"><b style="color:var(--ink)">A · 暖中性（推荐）</b> <span style="color:var(--muted)">米白底 + 墨绿/琥珀，正文可读性最好，长时间看不累</span></div>
+          </div>
+          <div class="flex items-center gap-3">
+            <div class="flex gap-1">
+              <span style="width:22px;height:22px;border-radius:6px;background:#0f172a"></span>
+              <span style="width:22px;height:22px;border-radius:6px;background:#334155"></span>
+              <span style="width:22px;height:22px;border-radius:6px;background:#94a3b8"></span>
+            </div>
+            <div class="text-[12.5px]"><b style="color:var(--ink)">B · 纯深色</b> <span style="color:var(--muted)">深空灰 + 单一强调色，夜间看表更舒服，但色彩分级信息变弱</span></div>
+          </div>
+          <div class="flex items-center gap-3">
+            <div class="flex gap-1">
+              <span style="width:22px;height:22px;border-radius:6px;background:#f1ece1;border:1px solid #e0d9c8"></span>
+              <span style="width:22px;height:22px;border-radius:6px;background:#fdf4ea;border:1px solid #e9c9a8"></span>
+              <span style="width:22px;height:22px;border-radius:6px;background:#f7ecee;border:1px solid #e0c0c4"></span>
+            </div>
+            <div class="text-[12.5px]"><b style="color:var(--ink)">C · 无彩色</b> <span style="color:var(--muted)">只用深浅区分状态，最克制，但「今天该练还是该歇」不够直觉</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== ALGORITHM ===================== -->
+<section class="pb-14">
+  <h2 class="font-serif text-[27px] mb-1" style="color:var(--ink)">分数怎么算</h2>
+  <p class="text-[14px] mb-8" style="color:var(--muted)">核心原则：HRV 是个体基线数据，只有跟「你自己的过去」比才有意义 —— 所以每个指标都先转成相对基线的偏离量。</p>
+
+  <div class="grid md:grid-cols-5 gap-6 mb-10">
+    <div class="card p-6 md:col-span-2">
+      <div class="text-[12.5px] font-semibold mb-4" style="color:var(--ink)">今日 61 分是怎么拼出来的</div>
+      <svg viewBox="0 0 260 190" class="w-full">
+        <!-- bar background -->
+        <rect x="0" y="26" width="260" height="26" rx="7" fill="#f1ece1"/>
+        <rect x="0" y="26" width="121" height="26" rx="7" fill="#2f6f5e"/>
+        <rect x="121" y="26" width="59" height="26" fill="#c0704a"/>
+        <rect x="180" y="26" width="22" height="26" fill="#c97b3f"/>
+        <rect x="202" y="26" width="58" height="26" rx="7" fill="#e9e3d6"/>
+        <text x="0" y="16" font-size="11" fill="#7c7a72" font-family="Outfit">50 分为「正好是你平均水平」</text>
+        <text x="121" y="72" font-size="11" fill="#2f6f5e" font-family="Outfit" text-anchor="middle">睡眠 +13.7</text>
+        <text x="150" y="92" font-size="11" fill="#c0704a" font-family="Outfit" text-anchor="middle">HRV −5.6</text>
+        <text x="191" y="72" font-size="11" fill="#c97b3f" font-family="Outfit" text-anchor="middle">心率 +2.5</text>
+        <line x1="202" y1="20" x2="202" y2="60" stroke="#14171e" stroke-width="2"/>
+        <text x="202" y="14" font-size="12" fill="#14171e" font-family="Outfit" text-anchor="middle" font-weight="600">61</text>
+        <text x="0" y="120" font-size="11" fill="#7c7a72" font-family="Outfit">贡献 = 权重 ×（该维度得分 − 50）</text>
+        <text x="0" y="140" font-size="11" fill="#7c7a72" font-family="Outfit">总分 = 50 + 三项贡献之和 = 50 + 10.6 = 61</text>
+        <text x="0" y="160" font-size="11" fill="#7c7a72" font-family="Outfit">缺失指标时，权重按剩余项重新归一化</text>
+        <text x="0" y="180" font-size="11" fill="#7c7a72" font-family="Outfit">并在界面标注「数据不全」，不假装有分数</text>
+      </svg>
+    </div>
+
+    <div class="md:col-span-3 card p-6 overflow-x-auto">
+      <div class="text-[12.5px] font-semibold mb-4" style="color:var(--ink)">三个维度的具体算法</div>
+      <table>
+        <thead><tr><th style="width:88px">维度</th><th style="width:44px">权重</th><th>公式</th><th style="width:118px">为什么这么算</th></tr></thead>
+        <tbody>
+          <tr>
+            <td style="color:var(--ink);font-weight:500">HRV (SDNN)</td>
+            <td class="num">40%</td>
+            <td class="font-mono" style="font-size:12.5px">z = ln(今日 ÷ 基线) ÷ ln(1.15)<br>分 = clamp(50 + 22z, 0, 100)</td>
+            <td style="font-size:12.5px">HRV 呈右偏分布，取对数后「高于/低于基线」才对称</td>
+          </tr>
+          <tr>
+            <td style="color:var(--ink);font-weight:500">睡眠</td>
+            <td class="num">35%</td>
+            <td class="font-mono" style="font-size:12.5px">0.45×时长分 + 0.25×效率分<br>+ 0.30×分期分</td>
+            <td style="font-size:12.5px">时长/效率对个人目标，分期（深睡+REM）与<b>自己的</b>基线比</td>
+          </tr>
+          <tr>
+            <td style="color:var(--ink);font-weight:500">静息心率</td>
+            <td class="num">25%</td>
+            <td class="font-mono" style="font-size:12.5px">z = (基线 − 今日) ÷ (0.03×基线)<br>分 = clamp(50 + 18z, 0, 100)</td>
+            <td style="font-size:12.5px">静息心率比基线低是好事；±3% 记为 1 个标准差</td>
+          </tr>
+        </tbody>
+      </table>
+      <div class="hairline my-4"></div>
+      <div class="grid sm:grid-cols-2 gap-5 text-[12.5px]">
+        <div>
+          <div class="font-semibold mb-1.5" style="color:var(--ink)">基线怎么建</div>
+          <ul class="space-y-1" style="color:var(--body)">
+            <li>· 滚动 30 天窗口（可调 14 / 30 / 60）</li>
+            <li>· 用<b>中位数</b>而非均值，抗离群值</li>
+            <li>· 同时保留 25–75 分位带，趋势图上画出来</li>
+            <li>· 有效样本 &lt; 7 天时显示「基线建立中 n/7」</li>
+          </ul>
+        </div>
+        <div>
+          <div class="font-semibold mb-1.5" style="color:var(--ink)">分档与建议</div>
+          <ul class="space-y-1" style="color:var(--body)">
+            <li>· <b style="color:var(--ink)">85+</b> 极佳 · 可以上强度</li>
+            <li>· <b style="color:var(--ink)">70–84</b> 良好 · 正常训练</li>
+            <li>· <b style="color:var(--ink)">55–69</b> 一般 · 降强度控量</li>
+            <li>· <b style="color:var(--ink)">40–54</b> 欠佳 · 只做轻量活动</li>
+            <li>· <b style="color:var(--ink)">&lt;40</b> 建议休息</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card p-6">
+    <div class="text-[12.5px] font-semibold mb-1" style="color:var(--ink)">归因句怎么生成（这个 App 真正值钱的地方）</div>
+    <p class="text-[13px] mb-4" style="color:var(--muted)">不写「今日状态一般」这种废话，而是指出<b style="color:var(--ink)">哪一项在拖后腿、拖了多少</b>。</p>
+    <div class="grid md:grid-cols-3 gap-3 text-[12.5px]">
+      <div class="rounded-xl p-4" style="background:#fdf4ea;border:1px solid #e9c9a8">
+        <div class="font-semibold mb-1.5" style="color:#8a5a2c">拖累型</div>
+        <div style="color:var(--body)">「HRV 比基线低 8.7%，自主神经恢复还没跟上 —— 今天别冲重量。」</div>
+      </div>
+      <div class="rounded-xl p-4" style="background:#eef4f1;border:1px solid #cfe0da">
+        <div class="font-semibold mb-1.5" style="color:#2f6f5e">支撑型</div>
+        <div style="color:var(--body)">「睡满 7h52m、深睡 1h06m，HRV 回到基线之上 —— 今天可以上强度。」</div>
+      </div>
+      <div class="rounded-xl p-4" style="background:#f4f1e9;border:1px solid #e6dfd0">
+        <div class="font-semibold mb-1.5" style="color:#7c7a72">异常型</div>
+        <div style="color:var(--body)">「今天数据缺失（昨晚没戴表）。基线只按 2 项算，参考度较低。」</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== ARCHITECTURE ===================== -->
+<section class="pb-14">
+  <h2 class="font-serif text-[27px] mb-1" style="color:var(--ink)">数据是怎么流动的</h2>
+  <p class="text-[14px] mb-8" style="color:var(--muted)">小组件无法直接可靠地查 HealthKit，标准做法是 App 算完写入共享容器，小组件只读缓存。</p>
+
+  <div class="grid lg:grid-cols-[1.35fr_1fr] gap-6">
+    <div class="card p-6">
+      <div class="text-[12.5px] font-semibold mb-5" style="color:var(--ink)">主链路</div>
+      <div class="grid grid-cols-[1fr_28px_1fr_28px_1fr] items-center gap-1 mb-4">
+        <div class="flowbox"><div class="text-[13px] font-medium" style="color:var(--ink)">Apple Watch</div><div class="text-[11px] mt-1" style="color:var(--muted)">睡眠分期 · HRV<br>静息心率</div></div>
+        <div class="flowarrow"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></div>
+        <div class="flowbox"><div class="text-[13px] font-medium" style="color:var(--ink)">iOS 健康数据库</div><div class="text-[11px] mt-1" style="color:var(--muted)">HealthKit 只读权限</div></div>
+        <div class="flowarrow"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></div>
+        <div class="flowbox" style="border-color:var(--primary);background:var(--primary-soft)"><div class="text-[13px] font-medium" style="color:var(--primary)">状态 App</div><div class="text-[11px] mt-1" style="color:var(--muted)">取数 → 基线 →<br>算分 → 归因</div></div>
+      </div>
+      <div class="flex justify-center my-1"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#c3bcac" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M6 13l6 6 6-6"/></svg></div>
+      <div class="flowbox" style="border-color:#e9d9b8;background:#fdf4ea"><div class="text-[13px] font-medium" style="color:#8a5a2c">App Group 共享容器</div><div class="text-[11px] mt-1" style="color:var(--muted)">today.json（今日分数+明细） · history.json（30 天序列）</div></div>
+      <div class="flex justify-center my-1"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#c3bcac" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M6 13l6 6 6-6"/></svg></div>
+      <div class="flowbox" style="border-color:#cfe0da;background:#eef4f1"><div class="text-[13px] font-medium" style="color:#2f6f5e">主屏小组件</div><div class="text-[11px] mt-1" style="color:var(--muted)">只读共享容器 → 渲染，不查 HealthKit</div></div>
+    </div>
+
+    <div class="space-y-4">
+      <div class="card p-6">
+        <div class="text-[12.5px] font-semibold mb-3" style="color:var(--ink)">刷新时机</div>
+        <ul class="space-y-2 text-[12.5px]" style="color:var(--body)">
+          <li class="flex gap-2.5"><span style="color:var(--primary)">●</span><span>App 每次进入前台 → 重新查询 + 重算 + <code class="font-mono text-[11.5px]">reloadAllTimelines</code></span></li>
+          <li class="flex gap-2.5"><span style="color:var(--primary)">●</span><span>小组件 timeline 每 30 分钟一条，兜底刷新</span></li>
+          <li class="flex gap-2.5"><span style="color:var(--primary)">●</span><span>长按小组件 → 「刷新」按钮，直接触发重算（iOS 17+ 交互式小组件）</span></li>
+          <li class="flex gap-2.5"><span style="color:var(--primary)">●</span><span>后台 <code class="font-mono text-[11.5px]">BGAppRefreshTask</code> 尽力而为，不保证准时</span></li>
+        </ul>
+      </div>
+      <div class="card p-6">
+        <div class="text-[12.5px] font-semibold mb-3" style="color:var(--ink)">技术选型</div>
+        <dl class="kv">
+          <dt>语言 / 框架</dt><dd>Swift + SwiftUI（原生）</dd>
+          <dt>数据读取</dt><dd>HealthKit，只读</dd>
+          <dt>本地存储</dt><dd>SwiftData + JSON 快照</dd>
+          <dt>小组件</dt><dd>WidgetKit（SwiftUI 扩展）</dd>
+          <dt>最低版本</dt><dd>iOS 17（交互式小组件需要）</dd>
+          <dt>网络</dt><dd>无。全部数据不出设备</dd>
+        </dl>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== NO-MAC PATH ===================== -->
+<section class="pb-14">
+  <h2 class="font-serif text-[27px] mb-1" style="color:var(--ink)">没有 Mac，怎么把 App 装到 iPhone 上</h2>
+  <p class="text-[14px] mb-8" style="color:var(--muted)">iOS App 必须由 macOS 编译签名。但「编译」和「用设备」可以拆开 —— 编译放在云端，装机放在你这台 Windows 上。</p>
+
+  <div class="card p-6 mb-7 overflow-x-auto">
+    <table>
+      <thead><tr><th style="width:176px">方案</th><th style="width:92px">成本</th><th>怎么走</th><th style="width:150px">有效期 / 代价</th></tr></thead>
+      <tbody>
+        <tr style="background:#f4f8f6">
+          <td style="color:var(--ink);font-weight:600">A · 云端编译 + Sideloadly<br><span style="font-weight:400;font-size:12px;color:var(--muted)">推荐（先零成本跑通）</span></td>
+          <td class="num" style="color:#2f6f5e">¥0</td>
+          <td style="font-size:12.5px">GitHub Actions 的 macOS runner（公开仓库<b>免费不限量</b>；私有仓库需绑定 $1 消费上限）编译出 .ipa → 下载到 Windows → Sideloadly 用你的 Apple ID 签名并安装到 iPhone</td>
+          <td style="font-size:12.5px">免费 Apple ID 证书 <b>7 天</b>到期；Sideloadly 可在 PC 开机且同 WiFi 时自动续签</td>
+        </tr>
+        <tr>
+          <td style="color:var(--ink);font-weight:600">B · 云端编译 + TestFlight<br><span style="font-weight:400;font-size:12px;color:var(--muted)">长期最省心</span></td>
+          <td class="num">$99/年</td>
+          <td style="font-size:12.5px">加入 Apple Developer Program → CI 里用 App Store Connect API 自动签名并上传 → iPhone 装「TestFlight」→ 收到即装，之后每次改代码只需 push</td>
+          <td style="font-size:12.5px">证书 <b>1 年</b>有效、自动更新、无 3 应用限制；需每年续费</td>
+        </tr>
+        <tr>
+          <td style="color:var(--ink);font-weight:600">C · 租一台云 Mac</td>
+          <td class="num">$85–165/月</td>
+          <td style="font-size:12.5px">MacStadium / MacinCloud / Scaleway 等租一台 Mac mini，远程桌面装 Xcode，直接编译</td>
+          <td style="font-size:12.5px">按月付费、不停机就在一直扣钱；国内访问海外节点延迟高</td>
+        </tr>
+        <tr>
+          <td style="color:var(--ink);font-weight:600">D · 买一台二手 Mac mini</td>
+          <td class="num">¥1900–2800</td>
+          <td style="font-size:12.5px">闲鱼 / 转转上 M1 8+256 约 ¥1900–2800（2026 行情），本机装 Xcode 最省心</td>
+          <td style="font-size:12.5px">一次性成本，但从此不再受任何限制；验机要确认已退出 Apple ID、无企业监管锁</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="grid md:grid-cols-2 gap-5">
+    <div class="card p-6">
+      <div class="text-[12.5px] font-semibold mb-4" style="color:var(--ink)">方案 A 的完整链路</div>
+      <ol class="timeline text-[13px]">
+        <li><strong style="color:var(--ink)">推代码</strong><p class="mt-1" style="color:var(--body)">Windows 上写完 → git push 到 GitHub 仓库</p></li>
+        <li><strong style="color:var(--ink)">云端自动编译</strong><p class="mt-1" style="color:var(--body)">Actions 在 macOS runner 上跑 xcodebuild，产出 .ipa 制品</p></li>
+        <li><strong style="color:var(--ink)">下载 + 签名 + 装机</strong><p class="mt-1" style="color:var(--body)">Windows 装 Sideloadly（需官网版 iTunes + iCloud），拖入 .ipa，填 Apple ID，点 Start</p></li>
+        <li><strong style="color:var(--ink)">开启开发者模式</strong><p class="mt-1" style="color:var(--body)">iOS 16+ 需在「设置 → 隐私与安全性 → 开发者模式」打开并重启一次</p></li>
+        <li><strong style="color:var(--ink)">信任证书</strong><p class="mt-1" style="color:var(--body)">「设置 → 通用 → VPN 与设备管理」里信任你的 Apple ID</p></li>
+      </ol>
+    </div>
+    <div class="card p-6" style="background:#fdf4ea;border-color:#e9c9a8">
+      <div class="text-[12.5px] font-semibold mb-3" style="color:#8a5a2c">先说清楚三个坑</div>
+      <ul class="space-y-2.5 text-[12.5px]" style="color:var(--body)">
+        <li><b>①</b> 证书 7 天到期。PC 关机或不在同一 WiFi，自动续签就失败，App 会打不开。所以方案 A 适合开发调试，长期用建议 B。</li>
+        <li><b>②</b> 免费账号同时只能签 3 个 App、每 7 天最多 10 个 App ID —— 你自己用完全够。</li>
+        <li><b>③</b> 免费的 iCloud（网页版）用来处理双重验证。别装 Microsoft Store 版 iTunes，装 Apple 官网的网页版，否则认不出手机。</li>
+      </ul>
+      <div class="hairline my-4"></div>
+      <div class="text-[12.5px]">
+        <b style="color:var(--ink)">HealthKit 权限怎么办？</b><br>
+        <span style="color:var(--body)">按 Apple 现行能力表，HealthKit 与 App Groups 对免费账号已开放。若实机签名时被拒，立刻切方案 B（$99）即可，不影响任何代码。</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== ROADMAP ===================== -->
+<section class="pb-14">
+  <h2 class="font-serif text-[27px] mb-1" style="color:var(--ink)">实施顺序</h2>
+  <p class="text-[14px] mb-8" style="color:var(--muted)">按「先能跑起来拿到分，再慢慢做好」的顺序，每一步都有可验证的产出。</p>
+
+  <div class="grid md:grid-cols-4 gap-4">
+    <div class="card p-5">
+      <div class="font-mono text-[11px] mb-2" style="color:var(--muted)">M1</div>
+      <div class="font-semibold mb-2" style="color:var(--ink)">打通数据</div>
+      <div class="text-[12.5px]" style="color:var(--body)">能读到睡眠分期、HRV、静息心率并在界面上打印出来。拿到真实数值后再谈算法。</div>
+      <div class="text-[11px] mt-3 font-mono" style="color:var(--primary)">验收：界面显示昨晚真实 HRV</div>
+    </div>
+    <div class="card p-5">
+      <div class="font-mono text-[11px] mb-2" style="color:var(--muted)">M2</div>
+      <div class="font-semibold mb-2" style="color:var(--ink)">基线 + 评分</div>
+      <div class="text-[12.5px]" style="color:var(--body)">30 天基线引擎、三维度加权、分档建议、归因句生成、数据缺失兜底。</div>
+      <div class="text-[11px] mt-3 font-mono" style="color:var(--primary)">验收：连续 7 天分数稳定</div>
+    </div>
+    <div class="card p-5">
+      <div class="font-mono text-[11px] mb-2" style="color:var(--muted)">M3</div>
+      <div class="font-semibold mb-2" style="color:var(--ink)">小组件</div>
+      <div class="text-[12.5px]" style="color:var(--body)">App Group 共享、小尺寸 + 中尺寸、交互式刷新按钮、timeline 兜底。</div>
+      <div class="text-[11px] mt-3 font-mono" style="color:var(--primary)">验收：桌面能直接看到今日分</div>
+    </div>
+    <div class="card p-5">
+      <div class="font-mono text-[11px] mb-2" style="color:var(--muted)">M4</div>
+      <div class="font-semibold mb-2" style="color:var(--ink)">趋势 + 洞察</div>
+      <div class="text-[12.5px]" style="color:var(--body)">周/月折线、睡眠与次日 HRV 散点、自动生成的规律结论、训练记录回写与关联。</div>
+      <div class="text-[11px] mt-3 font-mono" style="color:var(--primary)">验收：能回答「少睡 1 小时，第二天差多少」</div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== DECISIONS ===================== -->
+<section class="pb-16">
+  <h2 class="font-serif text-[27px] mb-1" style="color:var(--ink)">还等你拍板</h2>
+  <p class="text-[14px] mb-7" style="color:var(--muted)">这四个点定完，我就可以直接开工写代码了。</p>
+
+  <div class="grid md:grid-cols-2 gap-4">
+    <div class="card p-5">
+      <div class="text-[12px] font-mono mb-2" style="color:var(--muted)">决策 01</div>
+      <div class="font-semibold mb-1.5" style="color:var(--ink)">装机路径走哪条</div>
+      <div class="text-[12.5px]" style="color:var(--body)">A（零成本，每 7 天续签）／ B（$99/年，TestFlight 自动更新）／ 先 A 后 B</div>
+    </div>
+    <div class="card p-5">
+      <div class="text-[12px] font-mono mb-2" style="color:var(--muted)">决策 02</div>
+      <div class="font-semibold mb-1.5" style="color:var(--ink)">视觉方向</div>
+      <div class="text-[12.5px]" style="color:var(--body)">A 暖中性（米白 + 墨绿/琥珀）／ B 纯深色 ／ C 无彩色</div>
+    </div>
+    <div class="card p-5">
+      <div class="text-[12px] font-mono mb-2" style="color:var(--muted)">决策 03</div>
+      <div class="font-semibold mb-1.5" style="color:var(--ink)">评分偏保守还是偏激进</div>
+      <div class="text-[12.5px]" style="color:var(--body)">HRV 权重 40% 更看重恢复信号；调到 30% 则更看重睡眠。要不要加「敏感度」滑块让你自己调陡峭程度？</div>
+    </div>
+    <div class="card p-5">
+      <div class="text-[12px] font-mono mb-2" style="color:var(--muted)">决策 04</div>
+      <div class="font-semibold mb-1.5" style="color:var(--ink)">训练记录要不要回写</div>
+      <div class="text-[12.5px]" style="color:var(--body)">今天页点「高/中/轻/休息」写进「健康」，趋势页就能对比「低分日硬练 vs 高分日训练」的效果。还是只读不写？</div>
+    </div>
+  </div>
+</section>
+
+<footer class="pb-14 pt-8" style="border-top:1px solid var(--line)">
+  <div class="text-[12px] font-mono" style="color:var(--muted)">状态 App · 设计方案 v1 · 2026-10-27</div>
+</footer>
+
+</div>
+
+<script>
+const SANS = "'Outfit', sans-serif";
+const GRID = 'rgba(20,23,30,.06)';
+const MUTED = '#a09a8d';
+const bandColor = v => v>=85?'#2f6f5e': v>=70?'#4f9077': v>=55?'#c97b3f': v>=40?'#c0704a':'#b06367';
+
+const scores=[72,68,75,81,66,59,63,77,85,79,58,62,70,88,74,66,52,61,80,83,71,65,90,76,69,55,73,87,84,61];
+
+new Chart(document.getElementById('miniChart'),{
+  type:'line',
+  data:{labels:scores.map((_,i)=>i+1),
+    datasets:[{data:scores,borderColor:'#2f6f5e',borderWidth:2,tension:.35,pointRadius:0,
+      pointHoverRadius:4,fill:true,
+      backgroundColor:(ctx)=>{
+        const g=ctx.chart.ctx.createLinearGradient(0,0,0,110);
+        g.addColorStop(0,'rgba(47,111,94,.20)');g.addColorStop(1,'rgba(47,111,94,0)');
+        return g;}}]},
+  options:{responsive:true,maintainAspectRatio:false,
+    plugins:{legend:{display:false},tooltip:{displayColors:false,backgroundColor:'#14171e',titleFont:{family:SANS,size:10},bodyFont:{family:SANS,size:11},callbacks:{title:(c)=>'第 '+c[0].label+' 天',label:(c)=>c.parsed.y+' 分'}}},
+    scales:{x:{display:false},y:{min:40,max:95,grid:{color:GRID},border:{display:false},ticks:{font:{family:SANS,size:9},color:MUTED,stepSize:20}}}}
+});
+
+const sl=[5.2,6.8,7.4,7.9,6.1,5.6,6.3,7.2,8.1,7.6,5.4,6.0,7.1,8.4,7.3,6.4,4.8,5.9,7.7,8.0,6.8,6.2,8.6,7.4,6.6,5.1,7.2,8.2,7.9,6.9];
+const hrvD=sl.map(v=>-((v-6.8)*4.6)+((Math.random()-.5)*3));
+new Chart(document.getElementById('miniScatter'),{
+  type:'scatter',
+  data:{datasets:[{data:sl.map((v,i)=>({x:v,y:hrvD[i]})),
+    backgroundColor:sl.map(v=>v<6?'#c0704a':'#4f9077'),pointRadius:3.2,pointHoverRadius:5}]},
+  options:{responsive:true,maintainAspectRatio:false,
+    plugins:{legend:{display:false},tooltip:{displayColors:false,backgroundColor:'#14171e',
+      titleFont:{family:SANS,size:10},bodyFont:{family:SANS,size:11},
+      callbacks:{title:(c)=>'睡了 '+c[0].parsed.x+' 小时',label:(c)=>'次日 HRV '+(c.parsed.y>0?'+':'')+c.parsed.y.toFixed(1)+'% vs 基线'}}},
+    scales:{x:{min:4,max:9,title:{display:true,text:'睡眠时长 (h)',font:{family:SANS,size:9},color:MUTED},grid:{color:GRID},border:{display:false},ticks:{font:{family:SANS,size:9},color:MUTED}},
+            y:{min:-16,max:10,title:{display:true,text:'次日 HRV 变化 %',font:{family:SANS,size:9},color:MUTED},grid:{color:GRID},border:{display:false},ticks:{font:{family:SANS,size:9},color:MUTED}}}}
+});
+</script>
+</body>
+</html>

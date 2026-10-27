@@ -1,0 +1,27 @@
+# macOS
+.DS_Store
+
+# Xcode / XcodeGen 生成物
+*.xcodeproj/
+*.xcworkspace/
+build/
+DerivedData/
+*.ipa
+*.dSYM.zip
+
+# Swift Package Manager
+.build/
+.swiftpm/
+
+# 本地预览脚本产生的日志
+*.log
+
+# Sideloadly / 签名相关（绝不入库）
+*.p12
+*.mobileprovision
+*.cer
+*.p8
+
+# 编辑器
+.vscode/
+.idea/

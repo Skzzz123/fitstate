@@ -1,0 +1,124 @@
+name: Build iOS App
+
+# 手动触发即可产出一个未签名 .ipa，下载到 Windows 后用 Sideloadly 签名安装。
+on:
+  workflow_dispatch:
+    inputs:
+      app_group_id:
+        description: 'App Group ID（形如 group.<你的TeamID>.com.god.fitstate）'
+        required: false
+        default: 'group.com.god.fitstate'
+  push:
+    branches: [main]
+    paths:
+      - 'Sources/**'
+      - 'project.yml'
+
+jobs:
+  build:
+    name: Build unsigned .ipa
+    runs-on: macos-15
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select latest Xcode
+        run: |
+          set -euo pipefail
+          XCODE="$(ls /Applications | grep -E '^Xcode.*\.app$' | sort -V | tail -1)"
+          echo "Using $XCODE"
+          sudo xcode-select -s "/Applications/$XCODE"
+          xcodebuild -version
+
+      - name: Install XcodeGen
+        run: |
+          set -euo pipefail
+          if ! command -v xcodegen >/dev/null 2>&1; then
+            brew install xcodegen
+          fi
+          xcodegen --version
+
+      - name: Generate Xcode project
+        run: |
+          set -euo pipefail
+          xcodegen generate --spec project.yml
+
+      - name: Build
+        env:
+          APP_GROUP_ID: ${{ inputs.app_group_id || vars.APP_GROUP_ID || 'group.com.god.fitstate' }}
+        run: |
+          set -uo pipefail
+          export APP_GROUP_ID
+
+          build_app() {
+            xcodebuild \
+              -project FitState.xcodeproj \
+              -scheme FitState \
+              -configuration Release \
+              -sdk iphoneos \
+              -derivedDataPath build \
+              -destination 'generic/platform=iOS' \
+              APP_GROUP_ID="$APP_GROUP_ID" \
+              "$@" \
+              build
+          }
+
+          echo "### 尝试 1：ad-hoc 签名（保留 entitlements，供 Sideloadly 识别 HealthKit / App Group）"
+          if build_app \
+              CODE_SIGN_IDENTITY="-" \
+              CODE_SIGNING_REQUIRED=YES \
+              CODE_SIGNING_ALLOWED=YES \
+              CODE_SIGN_STYLE=Manual \
+              DEVELOPMENT_TEAM="" \
+              PROVISIONING_PROFILE_SPECIFIER="" \
+              > build-adhoc.log 2>&1; then
+            echo "ad-hoc 签名成功"
+          else
+            echo "ad-hoc 签名失败，改用未签名构建"
+            tail -40 build-adhoc.log || true
+            rm -rf build
+            build_app \
+              CODE_SIGN_IDENTITY="" \
+              CODE_SIGNING_REQUIRED=NO \
+              CODE_SIGNING_ALLOWED=NO \
+              CODE_SIGN_ENTITLEMENTS="" \
+              CODE_SIGN_STYLE=Manual \
+              DEVELOPMENT_TEAM="" \
+              PROVISIONING_PROFILE_SPECIFIER="" \
+              > build-unsigned.log 2>&1 || true
+            tail -40 build-unsigned.log || true
+          fi
+
+          test -d "build/Build/Products/Release-iphoneos/FitState.app"
+          echo "### 构建产物："
+          ls -la build/Build/Products/Release-iphoneos/
+
+      - name: Package .ipa
+        run: |
+          set -euo pipefail
+          APP_PATH="build/Build/Products/Release-iphoneos/FitState.app"
+          rm -rf build/ipa
+          mkdir -p build/ipa/Payload
+          cp -R "$APP_PATH" build/ipa/Payload/
+          # 未签名构建不携带 embedded.mobileprovision，Sideloadly 会在装机时重新签名
+          rm -f build/ipa/Payload/FitState.app/embedded.mobileprovision
+          cd build/ipa
+          zip -qry FitState.ipa Payload
+          ls -lh FitState.ipa
+
+      - name: Upload ipa
+        uses: actions/upload-artifact@v4
+        with:
+          name: FitState-ipa
+          path: build/ipa/FitState.ipa
+          retention-days: 30
+
+      - name: Summary
+        run: |
+          echo "### 构建完成" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "下载 FitState-ipa 制品里的 FitState.ipa，用 Sideloadly 装到 iPhone。" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHITHUB_STEP_SUMMARY
+          echo "如果之后要升级 App Group，请在仓库 Settings → Secrets and variables → Actions 里设置 APP_GROUP_ID 变量。" >> $GITHUB_STEP_SUMMARY
