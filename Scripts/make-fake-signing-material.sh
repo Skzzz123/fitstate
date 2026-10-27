@@ -17,25 +17,25 @@ WIDGET_BUNDLE="${WIDGET_BUNDLE:-com.god.fitstate.widget}"
 GROUP="${GROUP:-group.97792VH57A.com.god.fitstate}"
 P12_PW="fitstate"
 
-# --- 自签证书 + 私钥，打包成 p12 ---
-openssl req -x509 -newkey rsa:2048 -keyout build/fake-key.pem -out build/fake-cert.pem \
+# --- 一把自签证书，p12 / 描述文件 / 指纹三处共用 ---
+openssl req -x509 -newkey rsa:2048 -keyout build/sign-key.pem -out build/sign-cert.pem \
   -days 3650 -nodes -subj "/CN=FitState Self Test" >/dev/null 2>&1
-openssl pkcs12 -export -inkey build/fake-key.pem -in build/fake-cert.pem \
-  -out "$OUT/portal.p12" -passout "pass:$P12_PW" -name "FitState Self Test" >/dev/null 2>&1
-rm -f build/fake-key.pem build/fake-cert.pem
-echo "FAKE_P12 $OUT/portal.p12"
 
-# --- 假描述文件：结构和真的长得一模一样，含 healthkit 与 app groups ---
+openssl pkcs12 -export -inkey build/sign-key.pem -in build/sign-cert.pem \
+  -out "$OUT/portal.p12" -passout "pass:$P12_PW" -name "FitState Self Test" >/dev/null 2>&1
+cp build/sign-cert.pem "$OUT/portal.cer"
+echo "FAKE_P12 $OUT/portal.p12"
+echo "FAKE_CER $OUT/portal.cer"
+
+CERT_DER_B64=$(openssl x509 -in build/sign-cert.pem -outform DER | base64 | tr -d '\n')
+
+# --- 假描述文件：结构和真的一模一样，含 healthkit 与 app groups ---
 make_profile() {  # $1=输出文件  $2=bundle id
   local out="$1" bundle="$2"
-  local now exp uuid cert_b64
+  local now exp uuid
   now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
   exp=$(date -u -v+7d +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d '+7 days' +%Y-%m-%dT%H:%M:%SZ)
   uuid=$(uuidgen | tr '[:upper:]' '[:lower:]')
-  cert_b64=$(openssl req -x509 -newkey rsa:2048 -keyout build/tmp-key.pem -out build/tmp-cert.pem \
-    -days 3650 -nodes -subj "/CN=FitState Profile" >/dev/null 2>&1; \
-    openssl x509 -in build/tmp-cert.pem -outform DER | base64 | tr -d '\n')
-  rm -f build/tmp-key.pem build/tmp-cert.pem
 
   cat > build/fake-profile.plist <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -46,7 +46,7 @@ make_profile() {  # $1=输出文件  $2=bundle id
   <key>ApplicationIdentifierPrefix</key><array><string>${TEAM_ID}</string></array>
   <key>CreationDate</key><date>${now}</date>
   <key>Platform</key><array><string>iOS</string></array>
-  <key>DeveloperCertificates</key><array><data>${cert_b64}</data></array>
+  <key>DeveloperCertificates</key><array><data>${CERT_DER_B64}</data></array>
   <key>Entitlements</key>
   <dict>
     <key>application-identifier</key><string>${TEAM_ID}.${bundle}</string>
@@ -70,14 +70,11 @@ make_profile() {  # $1=输出文件  $2=bundle id
 </plist>
 PLIST
 
+  # 描述文件本身也要有 CMS 签名
   openssl smime -sign -in build/fake-profile.plist -outform DER -nodetach -binary \
-    -signer build/fake-sign.pem -inkey build/fake-sign-key.pem -out "$out" >/dev/null 2>&1
+    -signer build/sign-cert.pem -inkey build/sign-key.pem -out "$out" >/dev/null 2>&1
   echo "FAKE_PROFILE $out"
 }
-
-# 描述文件本身也要有签名（Apple 的就是 CMS 签名），这里用刚才那把自签证书
-openssl req -x509 -newkey rsa:2048 -keyout build/fake-sign-key.pem -out build/fake-sign.pem \
-  -days 3650 -nodes -subj "/CN=FitState Self Test Signer" >/dev/null 2>&1
 
 make_profile "$OUT/com.god.fitstate.mobileprovision" "$APP_BUNDLE"
 make_profile "$OUT/com.god.fitstate.widget.mobileprovision" "$WIDGET_BUNDLE"
@@ -88,6 +85,7 @@ cat > "$OUT/manifest.json" <<JSON
   "app_group": "${GROUP}",
   "healthkit_enabled": true,
   "p12": "portal.p12",
+  "cer": "portal.cer",
   "targets": [
     {
       "bundle_id": "${APP_BUNDLE}",

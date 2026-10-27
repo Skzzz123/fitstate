@@ -297,6 +297,8 @@ if DO_PROFILE
     # 下载证书内容（DER），和私钥一起打包成 p12
     begin
       pem = client.download_certificate(cert.id, cert.type_display_id, mac: false)
+      # 证书本体也存一份：签名脚本靠它的 SHA-1 指纹定位签名身份
+      File.binwrite(File.join(OUT_DIR, 'portal.cer'), pem)
       x509 = OpenSSL::X509::Certificate.new(pem)
       p12 = OpenSSL::PKCS12.new('fitstate', 'FitState Development', key, x509)
       p12_path = File.join(OUT_DIR, 'portal.p12')
