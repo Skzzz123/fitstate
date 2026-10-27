@@ -435,7 +435,7 @@ jobs:
         if: always()
         run: |
           {
-            echo "### 构建完成（签名模式：$SIGN_MODE）"
+            echo "### 构建完成（签名模式：${SIGN_MODE}）"
             echo ""
             if [ "$SIGN_MODE" = "apple" ]; then
               echo "下载 FitState-ipa 制品里的 FitState.ipa。"

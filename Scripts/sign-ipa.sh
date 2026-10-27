@@ -201,7 +201,7 @@ if [ -n "$WIDGET_PROFILE" ] && [ "$WIDGET_PROFILE" != "null" ] && [ -f "$PORTAL_
   echo "--- 小组件 entitlements ---"
   cat build/ent/widget.entitlements
   sign_with build/ent/widget.entitlements "$WIDGET_PATH" || die "小组件签名失败"
-  echo "### 小组件已签（身份：$IDENTITY）"
+  echo "### 小组件已签（身份：${IDENTITY}）"
 else
   echo "### 没有小组件描述文件，跳过扩展签名"
 fi
@@ -212,7 +212,7 @@ extract_entitlements "$PORTAL_DIR/$APP_PROFILE" build/ent/app.entitlements
 echo "--- App entitlements ---"
 cat build/ent/app.entitlements
 sign_with build/ent/app.entitlements "$APP_PATH" || die "主 App 签名失败"
-echo "### App 已签（身份：$IDENTITY）"
+echo "### App 已签（身份：${IDENTITY}）"
 
 # ---------------------------------------------------------------------------
 # 6. 校验：HealthKit 必须在签名里

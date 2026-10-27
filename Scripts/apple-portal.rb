@@ -10,6 +10,13 @@
 # 描述文件都会带上 com.apple.developer.healthkit，App 签名里也就有了这项权限。
 # 所以免费账号也能做到——不需要 Apple Developer Program。
 #
+# 为什么全部用原始接口（不直接用 spaceship 的高层方法）：
+#   免费个人团队在门户里有一批「列表」接口会返回
+#   "Access Unavailable — only for developers enrolled in a developer program"，
+#   而 spaceship 的 App.create! / ProvisioningProfile.create! 内部都要先列一次，
+#   一失败整条链路就断了。所以这里全部走 services-account 的原始 action，
+#   并且每个「写」操作都不依赖任何「读」操作。
+#
 # 用法（GitHub Actions 里）：
 #   APPLE_ID=... APP_SPECIFIC_PASSWORD=... ruby Scripts/apple-portal.rb
 #
@@ -25,24 +32,35 @@
 #   DO_PROFILE               1 = 同时创建证书与描述文件（默认 1）
 #
 # 产物：
-#   <OUT_DIR>/portal.p12            开发证书（含私钥，PKCS#12）
-#   <OUT_DIR>/<bundleid>.mobileprovision   每个 bundle id 一份描述文件
-#   <OUT_DIR>/manifest.json         清单：bundle id → 描述文件 / entitlements
+#   <OUT_DIR>/portal.p12                 开发证书（含私钥，PKCS#12）
+#   <OUT_DIR>/portal.cer                 证书本体（签名脚本靠它的 SHA-1 指纹定位身份）
+#   <OUT_DIR>/<bundleid>.mobileprovision 每个 bundle id 一份描述文件
+#   <OUT_DIR>/manifest.json              清单：bundle id → 描述文件 / entitlements
 #
 
 require 'json'
 require 'openssl'
 require 'base64'
 require 'fileutils'
+require 'tempfile'
 
 APPLE_ID  = ENV.fetch('APPLE_ID')
 PASSWORD  = ENV.fetch('APP_SPECIFIC_PASSWORD')
 OUT_DIR   = ENV.fetch('OUT_DIR', 'build/portal')
 TEAM_ID_ENV = ENV['TEAM_ID'].to_s
 DEVICE_UDID = ENV.fetch('DEVICE_UDID', '00008140-00166C2636D2801C')
-APP_BUNDLE    = ENV.fetch('TARGET_APP_BUNDLE_ID', 'com.god.fitstate')
+APP_BUNDLE = ENV.fetch('TARGET_APP_BUNDLE_ID', 'com.god.fitstate')
 WIDGET_BUNDLE = ENV.fetch('TARGET_WIDGET_BUNDLE_ID', 'com.god.fitstate.widget')
-DO_PROFILE   = ENV.fetch('DO_PROFILE', '1') == '1'
+DO_PROFILE = ENV.fetch('DO_PROFILE', '1') == '1'
+GROUP_ID_ENV = ENV['APP_GROUP_ID'].to_s
+
+# 门户里代表这两项能力的 featureType
+HEALTHKIT_FEATURE = 'HK421J6T7P'
+APPGROUP_FEATURE  = 'APG3427HIY'
+
+# 证书类型：优先用现代的 Apple Development，退回老式 Development
+CERT_TYPE_APPLE_DEV = '83Q87W3TGH'
+CERT_TYPE_DEV       = '5QPB9NHCEI'
 
 FileUtils.mkdir_p(OUT_DIR)
 
@@ -62,209 +80,338 @@ require 'spaceship'
 # 登录
 # --------------------------------------------------------------------------
 client = Spaceship::PortalClient.login(APPLE_ID, PASSWORD)
+log 'LOGIN_OK'
+
+# --------------------------------------------------------------------------
+# 门户原始接口封装
+#
+# 关键：CSRF token 来自任意一次响应的头。spaceship 的 ensure_csrf 在列表接口
+# 失败前会先把 csrf_tokens 清空，导致后续原始请求也带上不了 token。
+# 所以这里自己保存一份登录后的 token，必要时恢复。
+# --------------------------------------------------------------------------
+class Portal
+  def initialize(client)
+    @client = client
+    @csrf_backup = read_csrf
+    log "CSRF_INIT #{@csrf_backup.inspect}"
+  end
+
+  def read_csrf
+    if @client.respond_to?(:csrf_tokens)
+      @client.csrf_tokens
+    else
+      @client.send(:csrf_tokens)
+    end
+  rescue StandardError
+    nil
+  end
+
+  def write_csrf(value)
+    if @client.respond_to?(:csrf_tokens=)
+      @client.csrf_tokens = value
+    else
+      @client.send(:csrf_tokens=, value)
+    end
+  rescue StandardError
+    nil
+  end
+
+  def restore_csrf!
+    current = read_csrf
+    return if current.is_a?(Array) && current.compact.size == 2
+
+    write_csrf(@csrf_backup) if @csrf_backup
+    log "CSRF_RESTORED #{read_csrf.inspect}"
+  end
+
+  def team_id
+    @client.team_id
+  end
+
+  def raw(method, path, params)
+    restore_csrf!
+    @client.send(:request, method, path, params)
+  end
+
+  def post(path, params)
+    handle(raw(:post, path, params), path)
+  end
+
+  def get(path, params)
+    handle(raw(:get, path, params), path)
+  end
+
+  def handle(resp, path)
+    body = resp.body.to_s
+
+    # 免费个人账号最常见的两种拒绝，明确抛出来，日志一眼能看懂
+    if body.include?('Access Unavailable') || body.include?('enrolled in a developer program')
+      raise "ACCESS_UNAVAILABLE #{path} :: #{body[0, 400]}"
+    end
+
+    unless resp.success?
+      raise "HTTP #{resp.status} #{path} :: #{body[0, 400]}"
+    end
+
+    data = begin
+      JSON.parse(body)
+    rescue StandardError
+      body
+    end
+
+    if data.is_a?(Hash)
+      if data.key?('resultCode') && data['resultCode'].to_s != '0'
+        raise "RESULT_CODE #{data['resultCode']} #{path} :: #{data.inspect[0, 400]}"
+      end
+      msgs = data['messages'] || data['validationMessages']
+      log "PORTAL_MESSAGES #{path} :: #{msgs.inspect[0, 300]}" if msgs.is_a?(Array) && !msgs.empty?
+    end
+    data
+  end
+end
+
+portal = Portal.new(client)
+
 # --------------------------------------------------------------------------
 # 团队（Team）
-#
-# 免费个人团队在门户里是有 teamId 的（Sideloadly 建 App ID 时就拿到了），
-# 但 listTeams 的返回结构未必完整，所以留一条从 App Store Connect 会话反查的退路。
 # --------------------------------------------------------------------------
-def resolve_team_id(client)
-  return TEAM_ID_ENV unless TEAM_ID_ENV.empty?
-
-  begin
-    tid = client.team_id
-    return tid if tid && !tid.to_s.empty?
-  rescue StandardError => e
-    log "TEAM_ID_VIA_PORTAL_FAIL #{e.class}: #{e.message.to_s.lines.first.to_s.strip}"
-  end
-
-  begin
-    data = client.user_details_data
-    tid = data.dig('provider', 'providerId') || data.dig('provider', 'publicProviderId')
-    if tid && !tid.to_s.empty?
-      log "TEAM_ID_VIA_OLYMPUS #{tid}"
-      return tid
-    end
-  rescue StandardError => e
-    log "TEAM_ID_VIA_OLYMPUS_FAIL #{e.class}: #{e.message.to_s.lines.first.to_s.strip}"
-  end
-
+TEAM_ID = begin
+  tid = portal.team_id
+  tid = tid.to_s.strip
+  tid.empty? ? nil : tid
+rescue StandardError => e
+  log "TEAM_ID_VIA_PORTAL_FAIL #{e.class}: #{e.message.to_s.lines.first.to_s.strip}"
   nil
 end
 
-TEAM_ID = resolve_team_id(client)
-fail_hard('拿不到 Team ID') if TEAM_ID.nil? || TEAM_ID.to_s.empty?
+if TEAM_ID.nil? || TEAM_ID.empty?
+  TEAM_ID = TEAM_ID_ENV
+  log "TEAM_ID_FROM_ENV #{TEAM_ID}"
+else
+  log "TEAM_ID_FROM_PORTAL #{TEAM_ID}"
+end
+
+if TEAM_ID.nil? || TEAM_ID.empty?
+  # 最后的退路：从 olympus 会话里反查
+  begin
+    data = client.user_details_data
+    tid = data.dig('provider', 'providerId') || data.dig('provider', 'publicProviderId')
+    TEAM_ID = tid.to_s unless tid.to_s.empty?
+    log "TEAM_ID_VIA_OLYMPUS #{TEAM_ID}"
+  rescue StandardError => e
+    log "TEAM_ID_VIA_OLYMPUS_FAIL #{e.class}"
+  end
+end
+
+fail_hard('拿不到 Team ID') if TEAM_ID.nil? || TEAM_ID.empty?
 
 begin
   team = client.team_information || {}
-rescue StandardError
-  team = {}
-end
-log "LOGIN_OK team=#{TEAM_ID} name=#{team['name']} type=#{team['type']}"
-log "FREE_TEAM=#{team['type'].to_s.downcase.include?('free') ? 'YES' : 'NO'}"
-
-# --------------------------------------------------------------------------
-# 列出已有 App ID
-# --------------------------------------------------------------------------
-apps = Spaceship::Portal::App.all(mac: false)
-log "APPID_COUNT #{apps.count}"
-apps.each do |a|
-  log "APPID id=#{a.app_id} identifier=#{a.bundle_id} name=#{a.name} prefix=#{a.prefix} services=#{a.enable_services.inspect}"
+  log "TEAM_INFO name=#{team['name']} type=#{team['type']}"
+  log "FREE_TEAM=#{team['type'].to_s.downcase.include?('free') ? 'YES' : 'NO'}"
+rescue StandardError => e
+  log "TEAM_INFO_FAIL #{e.class}: #{e.message.to_s.lines.first.to_s.strip}"
 end
 
 # --------------------------------------------------------------------------
-# 找出（或创建）我们要用的两个 App ID
-#
-# 免费个人团队的 identifier 有好几种写法，先按后缀匹配已存在的，
-# 匹配不到再按几种候选形式去建。
+# App ID
 # --------------------------------------------------------------------------
 def candidate_identifiers(base, team_id)
-  list = []
-  list << base
-  list << "#{team_id}.#{base}" unless team_id.empty?
-  list << "#{base}.#{team_id}" unless team_id.empty?
-  list
+  list = [base]
+  list << "#{team_id}.#{base}" unless team_id.to_s.empty?
+  list << "#{base}.#{team_id}" unless team_id.to_s.empty?
+  list.uniq
 end
+
+# 列表接口在免费账号上可能被拒；拿不到就当空列表，后面靠创建 + 回读。
+def list_app_ids(portal, team_id)
+  data = portal.post('account/ios/identifiers/listAppIds.action', {
+                      teamId: team_id, pageNumber: 1, pageSize: 100, sort: 'name=asc'
+                    })
+  list = data.is_a?(Hash) ? (data['appIds'] || []) : []
+  log "APPID_LIST_COUNT #{list.count}"
+  list.each do |a|
+    log "APPID id=#{a['appIdId']} identifier=#{a['identifier']} name=#{a['name']}"
+  end
+  list
+rescue StandardError => e
+  log "APPID_LIST_FAIL #{e.class}: #{e.message.to_s.lines.first.to_s.strip}"
+  []
+end
+
+def create_app_id(portal, team_id, identifier, name)
+  data = portal.post('account/ios/identifiers/addAppId.action', {
+                      name: name, teamId: team_id, type: 'explicit', identifier: identifier
+                    })
+  app = data.is_a?(Hash) ? (data['appId'] || data) : {}
+  log "APPID_CREATED identifier=#{app['identifier']} id=#{app['appIdId']}"
+  app
+rescue StandardError => e
+  log "APPID_CREATE_FAIL #{identifier} #{e.class}: #{e.message.to_s.lines.first.to_s.strip}"
+  nil
+end
+
+def get_app_detail(portal, team_id, app_id)
+  data = portal.post('account/ios/identifiers/getAppIdDetail.action', {
+                      teamId: team_id, appIdId: app_id
+                    })
+  data.is_a?(Hash) ? (data['appId'] || data) : {}
+rescue StandardError => e
+  log "APPID_DETAIL_FAIL #{app_id} #{e.class}: #{e.message.to_s.lines.first.to_s.strip}"
+  {}
+end
+
+apps = list_app_ids(portal, TEAM_ID)
 
 def find_app(apps, base, team_id, must_include: nil, must_exclude: nil)
   cands = candidate_identifiers(base, team_id)
   apps.each do |a|
-    ident = a.bundle_id.to_s
-    return a if cands.include?(ident)
+    ident = a['identifier'].to_s
+    return a if cands.any? { |c| c.casecmp(ident).zero? }
+  end
+  apps.each do |a|
+    ident = a['identifier'].to_s
     next unless ident.include?(base)
     next if must_exclude && ident.include?(must_exclude)
     next if must_include && !ident.include?(must_include)
-    # 门户里同一个 App 可能有前缀/后缀几种写法，取最像的那个
     return a
   end
   nil
 end
 
-# spaceship 自带的 App.create! 会顺带勾上 IAP 与 Game Center，
-# 而免费个人团队没有这两项能力，Apple 会直接拒掉。
-# 所以这里直接调门户接口，只带必要的字段。
-def create_app_minimal(client, bundle_id, name)
-  resp = client.request(:post, 'account/ios/identifiers/addAppId.action', {
-    name: name,
-    teamId: client.team_id,
-    type: 'explicit',
-    identifier: bundle_id
-  })
-  data = client.parse_response(resp, 'appId')
-  Spaceship::Portal::App.new(data)
-end
-
-def ensure_app(client, apps, base, team_id, display_name, must_include: nil, must_exclude: nil)
+def ensure_app(portal, apps, team_id, base, display_name, must_include: nil, must_exclude: nil)
   existing = find_app(apps, base, team_id, must_include: must_include, must_exclude: must_exclude)
   if existing
-    log "APPID_FOUND #{base} -> #{existing.bundle_id} (id=#{existing.app_id})"
+    log "APPID_FOUND #{base} -> #{existing['identifier']} (id=#{existing['appIdId']})"
     return existing
   end
 
   candidate_identifiers(base, team_id).each do |ident|
-    created = nil
-    begin
-      created = Spaceship::Portal::App.create!(bundle_id: ident, name: display_name, mac: false)
-    rescue StandardError => e
-      log "APPID_CREATE_FAIL(spaceship) #{ident} #{e.class}: #{e.message.to_s.lines.first.to_s.strip}"
-      begin
-        created = create_app_minimal(client, ident, display_name)
-      rescue StandardError => e2
-        log "APPID_CREATE_FAIL(minimal) #{ident} #{e2.class}: #{e2.message.to_s.lines.first.to_s.strip}"
-        next
-      end
-    end
-    if created
-      log "APPID_CREATED #{base} -> #{created.bundle_id} (id=#{created.app_id})"
-      apps << created
-      return created
-    end
+    created = create_app_id(portal, team_id, ident, display_name)
+    next if created.nil? || created['appIdId'].to_s.empty?
+
+    apps << created
+    return created
   end
+
   log "APPID_MISSING #{base}"
   nil
 end
 
-app    = ensure_app(client, apps, APP_BUNDLE,    TEAM_ID, 'FitState',      must_exclude: 'widget')
-widget = ensure_app(client, apps, WIDGET_BUNDLE, TEAM_ID, 'FitState Widget', must_include: 'widget')
-fail_hard("找不到主 App 的 App ID（#{APP_BUNDLE}）") if app.nil?
-
-# --------------------------------------------------------------------------
-# 用户组（App Groups）
-# --------------------------------------------------------------------------
-group_id = ENV['APP_GROUP_ID'].to_s
-group_id = "group.#{TEAM_ID}.#{APP_BUNDLE}" if group_id.empty?
-
-group = begin
-  Spaceship::Portal::AppGroup.find(group_id)
-rescue StandardError
-  nil
-end
-if group.nil?
-  group = begin
-    Spaceship::Portal::AppGroup.create!(group_id: group_id, name: 'FitState Group')
-    log "APP_GROUP_CREATED #{group.group_id}"
-  rescue StandardError => e
-    log "APP_GROUP_CREATE_FAIL #{group_id} #{e.class}: #{e.message.to_s.lines.first.to_s.strip}"
-    nil
-  end
-else
-  log "APP_GROUP_EXISTS #{group.group_id}"
-end
+app    = ensure_app(portal, apps, TEAM_ID, APP_BUNDLE,    'FitState',        must_exclude: 'widget')
+widget = ensure_app(portal, apps, TEAM_ID, WIDGET_BUNDLE, 'FitState Widget', must_include: 'widget')
+fail_hard("建不出主 App 的 App ID（#{APP_BUNDLE}）") if app.nil?
 
 # --------------------------------------------------------------------------
 # 开启能力：HealthKit（主 App）+ App Groups（两个都要）
 # --------------------------------------------------------------------------
-def enable_service(app, service, label)
-  app.update_service(service)
-  log "SERVICE_OK #{label} #{app.bundle_id}"
+def enable_service(portal, team_id, app, feature_type, label)
+  portal.post('account/ios/identifiers/updateService.action', {
+                teamId: team_id,
+                displayId: app['appIdId'],
+                featureType: feature_type,
+                featureValue: 'on'
+              })
+  log "SERVICE_OK #{label} #{app['identifier']}"
   true
 rescue StandardError => e
-  log "SERVICE_FAIL #{label} #{app.bundle_id} #{e.class}: #{e.message.to_s.lines.first.to_s.strip}"
+  log "SERVICE_FAIL #{label} #{app['identifier']} #{e.class}: #{e.message.to_s.lines.first.to_s.strip}"
   false
 end
 
-health_ok = enable_service(app, Spaceship::Portal::AppService::HealthKit, 'HealthKit')
-enable_service(widget, Spaceship::Portal::AppService::AppGroup, 'AppGroup') if widget
+health_ok = enable_service(portal, TEAM_ID, app, HEALTHKIT_FEATURE, 'HealthKit')
+enable_service(portal, TEAM_ID, widget, APPGROUP_FEATURE, 'AppGroup') if widget
 
-if group
+# --------------------------------------------------------------------------
+# 用户组（App Groups）
+# --------------------------------------------------------------------------
+group_id = GROUP_ID_ENV
+group_id = "group.#{TEAM_ID}.#{APP_BUNDLE}" if group_id.to_s.empty?
+
+group_app_id = nil
+begin
+  data = portal.post('account/ios/identifiers/addApplicationGroup.action', {
+                      name: 'FitState Group', identifier: group_id, teamId: TEAM_ID
+                    })
+  grp = data.is_a?(Hash) ? (data['applicationGroup'] || {}) : {}
+  group_app_id = grp['applicationGroup']
+  log "APP_GROUP_ADD identifier=#{grp['identifier']} id=#{group_app_id}"
+rescue StandardError => e
+  log "APP_GROUP_ADD_FAIL #{group_id} #{e.class}: #{e.message.to_s.lines.first.to_s.strip}"
+end
+
+# 组早就建过的话，add 会返回「已存在」而不是对象，再列一次兜底。
+if group_app_id.nil?
+  begin
+    data = portal.post('account/ios/identifiers/listApplicationGroups.action', {
+                        teamId: TEAM_ID, pageNumber: 1, pageSize: 100, sort: 'name=asc'
+                      })
+    list = data.is_a?(Hash) ? (data['applicationGroupList'] || []) : []
+    hit = list.find { |g| g['identifier'].to_s == group_id }
+    group_app_id = hit['applicationGroup'] if hit
+    log "APP_GROUP_LIST hit=#{!hit.nil?} id=#{group_app_id} count=#{list.count}"
+  rescue StandardError => e2
+    log "APP_GROUP_LIST_FAIL #{e2.class}: #{e2.message.to_s.lines.first.to_s.strip}"
+  end
+end
+
+if group_app_id
   [app, widget].compact.each do |a|
     begin
-      a.associate_groups([group])
-      log "GROUP_ASSIGNED #{a.bundle_id} <- #{group.group_id}"
+      portal.post('account/ios/identifiers/assignApplicationGroupToAppId.action', {
+                    teamId: TEAM_ID,
+                    appIdId: a['appIdId'],
+                    displayId: a['appIdId'],
+                    applicationGroups: [group_id]
+                  })
+      log "GROUP_ASSIGNED #{a['identifier']} <- #{group_id}"
     rescue StandardError => e
-      log "GROUP_ASSIGN_FAIL #{a.bundle_id} #{e.class}: #{e.message.to_s.lines.first.to_s.strip}"
+      log "GROUP_ASSIGN_FAIL #{a['identifier']} #{e.class}: #{e.message.to_s.lines.first.to_s.strip}"
     end
   end
 end
 
 # 回读一遍，确认能力真的挂上了
 [app, widget].compact.each do |a|
-  begin
-    d = a.details
-    log "DETAIL #{a.bundle_id} services=#{d.enable_services.inspect} groups=#{d.associated_groups.map { |g| g.group_id }.inspect}"
-  rescue StandardError => e
-    log "DETAIL_FAIL #{a.bundle_id} #{e.class}: #{e.message.to_s.lines.first.to_s.strip}"
-  end
+  d = get_app_detail(portal, TEAM_ID, a['appIdId'])
+  features = d['features'].is_a?(Hash) ? d['features'].keys : []
+  log "DETAIL #{a['identifier']} features=#{features.inspect} groups=#{d['associatedApplicationGroups'].inspect}"
 end
 
 # --------------------------------------------------------------------------
 # 设备
 # --------------------------------------------------------------------------
-device = begin
-  Spaceship::Portal::Device.find_by_udid(DEVICE_UDID)
-rescue StandardError
-  nil
+device_id = nil
+begin
+  data = portal.post('account/ios/device/addDevices.action', {
+                      teamId: TEAM_ID,
+                      deviceClasses: 'iphone',
+                      deviceNumbers: DEVICE_UDID,
+                      deviceNames: 'God iPhone',
+                      register: 'single'
+                    })
+  devs = data.is_a?(Hash) ? (data['devices'] || []) : []
+  device_id = devs.first['deviceId'] if devs.first
+  log "DEVICE_ADD ok id=#{device_id}"
+rescue StandardError => e
+  log "DEVICE_ADD_FAIL #{DEVICE_UDID} #{e.class}: #{e.message.to_s.lines.first.to_s.strip}"
 end
-if device.nil?
-  device = begin
-    Spaceship::Portal::Device.create!(name: 'God iPhone', udid: DEVICE_UDID)
-    log "DEVICE_CREATED #{device.udid} id=#{device.id}"
-  rescue StandardError => e
-    log "DEVICE_CREATE_FAIL #{DEVICE_UDID} #{e.class}: #{e.message.to_s.lines.first.to_s.strip}"
-    nil
+
+# 设备可能早就注册过（Sideloadly 之类的工具会顺手注册），addDevices 会返回
+# 「已存在」的提示而不是 devices 数组，所以再列一次兜底。
+if device_id.nil?
+  begin
+    data = portal.post('account/ios/device/listDevices.action', {
+                        teamId: TEAM_ID, pageNumber: 1, pageSize: 100,
+                        sort: 'name=asc', includeRemovedDevices: false
+                      })
+    devs = data.is_a?(Hash) ? (data['devices'] || []) : []
+    hit = devs.find { |d| d['deviceNumber'].to_s == DEVICE_UDID }
+    device_id = hit['deviceId'] if hit
+    log "DEVICE_LIST hit=#{!hit.nil?} id=#{device_id} count=#{devs.count}"
+  rescue StandardError => e2
+    log "DEVICE_LIST_FAIL #{e2.class}: #{e2.message.to_s.lines.first.to_s.strip}"
   end
-else
-  log "DEVICE_EXISTS #{device.udid} id=#{device.id}"
 end
 
 # --------------------------------------------------------------------------
@@ -272,95 +419,180 @@ end
 # --------------------------------------------------------------------------
 manifest = {
   'team_id' => TEAM_ID,
-  'app_group' => group&.group_id,
+  'app_group' => group_id,
   'healthkit_enabled' => health_ok,
   'targets' => []
 }
 
+def parse_profile_plist(xml)
+  Tempfile.create(['fitstate-profile', '.plist']) do |f|
+    f.binmode
+    f.write(xml)
+    f.flush
+    out = `plutil -convert json -o - "#{f.path}" 2>/dev/null`
+    return JSON.parse(out) if $?.success? && !out.to_s.strip.empty?
+  end
+  {}
+rescue StandardError => e
+  log "PLIST_PARSE_FAIL #{e.class}: #{e.message.to_s.lines.first.to_s.strip}"
+  {}
+end
+
 if DO_PROFILE
-  # 证书：免费团队一般发 "Apple Development"（83Q87W3TGH），退路是老式 Development（5QPB9NHCEI）
-  csr, key = Spaceship::Portal::Certificate.create_certificate_signing_request
-  cert = nil
-  [Spaceship::Portal::Certificate::AppleDevelopment, Spaceship::Portal::Certificate::Development].each do |klass|
+  # --- CSR ---
+  key = OpenSSL::PKey::RSA.new(2048)
+  csr = OpenSSL::X509::Request.new
+  csr.version = 0
+  csr.subject = OpenSSL::X509::Name.new([
+                                        ['CN', 'FitState Development'],
+                                        ['emailAddress', APPLE_ID]
+                                      ])
+  csr.public_key = key.public_key
+  csr.sign(key, OpenSSL::Digest::SHA256.new)
+  csr_content = Base64.strict_encode64(csr.to_der)
+
+  # --- 申请证书 ---
+  cert_request = nil
+  cert_type = nil
+  [CERT_TYPE_APPLE_DEV, CERT_TYPE_DEV].each do |type|
     begin
-      cert = klass.create!(csr: csr, bundle_id: app.bundle_id)
-      log "CERT_CREATED #{klass} id=#{cert.id} name=#{cert.name}"
+      data = portal.post('account/ios/certificate/submitCertificateRequest.action', {
+                          teamId: TEAM_ID,
+                          type: type,
+                          csrContent: csr_content,
+                          appIdId: app['appIdId'],
+                          specialIdentifierDisplayId: app['appIdId']
+                        })
+      req = data.is_a?(Hash) ? (data['certRequest'] || data) : {}
+      if req['certificateId'].to_s.empty?
+        raise "响应里没有 certificateId :: #{data.inspect[0, 300]}"
+      end
+      cert_request = req
+      cert_type = req['certificateTypeDisplayId'] || type
+      log "CERT_OK type=#{type} id=#{req['certificateId']} name=#{req['name']}"
       break
     rescue StandardError => e
-      log "CERT_FAIL #{klass} #{e.class}: #{e.message.to_s.lines.first.to_s.strip}"
+      log "CERT_FAIL type=#{type} #{e.class}: #{e.message.to_s.lines.first.to_s.strip}"
     end
   end
 
-  if cert.nil?
-    log 'CERT_MISSING —— 描述文件无法创建'
-  else
-    # 下载证书内容（DER），和私钥一起打包成 p12
-    begin
-      pem = client.download_certificate(cert.id, cert.type_display_id, mac: false)
-      # 证书本体也存一份：签名脚本靠它的 SHA-1 指纹定位签名身份
-      File.binwrite(File.join(OUT_DIR, 'portal.cer'), pem)
-      x509 = OpenSSL::X509::Certificate.new(pem)
-      p12 = OpenSSL::PKCS12.new('fitstate', 'FitState Development', key, x509)
-      p12_path = File.join(OUT_DIR, 'portal.p12')
-      File.binwrite(p12_path, p12.serialize)
-      log "P12_WRITTEN #{p12_path} #{File.size(p12_path)} bytes"
-      manifest['p12'] = 'portal.p12'
-    rescue StandardError => e
-      log "P12_FAIL #{e.class}: #{e.message.to_s.lines.first.to_s.strip}"
-    end
+  if cert_request.nil?
+    fail_hard('证书申请失败 —— 免费团队可能不给发证书')
+  end
 
-    # 每个 bundle id 一份描述文件
-    [app, widget].compact.each do |a|
+  # --- 下载证书 + 打包 p12 ---
+  begin
+    resp = portal.raw(:get, 'account/ios/certificate/downloadCertificateContent.action',
+                      teamId: TEAM_ID, certificateId: cert_request['certificateId'], type: cert_type)
+    der = resp.body
+    raise "下载到的证书是空的" if der.to_s.empty?
+
+    File.binwrite(File.join(OUT_DIR, 'portal.cer'), der)
+    x509 = OpenSSL::X509::Certificate.new(der)
+    log "CERT_DOWNLOADED subject=#{x509.subject} fingerprint=#{x509.fingerprint('sha1')}"
+
+    p12 = OpenSSL::PKCS12.new('fitstate', 'FitState Development', key, x509)
+    p12_path = File.join(OUT_DIR, 'portal.p12')
+    File.binwrite(p12_path, p12.serialize)
+    File.chmod(0o600, p12_path)
+    log "P12_WRITTEN #{p12_path} #{File.size(p12_path)} bytes"
+    manifest['p12'] = 'portal.p12'
+    manifest['cer'] = 'portal.cer'
+  rescue StandardError => e
+    log "P12_FAIL #{e.class}: #{e.message.to_s.lines.first.to_s.strip}"
+    fail_hard('证书下载失败')
+  end
+
+  # --- 每个 bundle id 一份描述文件 ---
+  [app, widget].compact.each do |a|
+    bundle = a['identifier']
+    profile_xml = nil
+    profile_ent = {}
+
+    # 模板候选：默认（按 App ID 已开能力自动生成）→ 显式指定
+    templates = [nil, "iOS Team Provisioning Profile:#{bundle}", "iOS Team Provisioning Profile:#{bundle}:HealthKit"]
+
+    templates.each do |template|
       begin
-        profile = Spaceship::Portal::ProvisioningProfile.create!(
-          name: "FitState #{a.bundle_id} Dev",
-          bundle_id: a.bundle_id,
-          certificate: cert,
-          devices: device ? [device] : []
-        )
-        data = profile.download
-        safe = a.bundle_id.gsub(/[^A-Za-z0-9._-]/, '_')
-        path = File.join(OUT_DIR, "#{safe}.mobileprovision")
-        File.binwrite(path, data)
-        log "PROFILE_WRITTEN #{path} #{File.size(path)} bytes"
-
-        # 从描述文件里读出真实的 entitlements 和设备列表
-        plist = data.to_s
-        ent = {}
-        dev = []
-        if (m = plist.match(/<key>Entitlements<\/key>\s*<dict>(.*?)<\/dict>/m))
-          body = m[1]
-          body.scan(/<key>([^<]+)<\/key>\s*(?:<string>([^<]*)<\/string>|<array>(.*?)<\/array>|<true\/>|<false\/>)/m) do |k, sv, av|
-            if av
-              ent[k] = av.scan(/<string>([^<]*)<\/string>/m).flatten
-            elsif sv
-              ent[k] = sv
-            else
-              ent[k] = true
-            end
-          end
-        end
-        if (m = plist.match(/<key>ProvisionedDevices<\/key>\s*<array>(.*?)<\/array>/m))
-          dev = m[1].scan(/<string>([^<]*)<\/string>/m).flatten
-        end
-        manifest['targets'] << {
-          'bundle_id' => a.bundle_id,
-          'profile' => File.basename(path),
-          'entitlements' => ent,
-          'provisioned_devices' => dev
+        params = {
+          teamId: TEAM_ID,
+          provisioningProfileName: "FitState #{bundle} Dev",
+          appIdId: a['appIdId'],
+          distributionType: 'development',
+          certificateIds: cert_request['certificateId'],
+          deviceIds: device_id ? [device_id] : []
         }
-        log "PROFILE_ENTITLEMENTS #{a.bundle_id} #{ent.inspect}"
+        params[:template] = template if template
+
+        data = portal.post('account/ios/profile/createProvisioningProfile.action', params)
+        prof = data.is_a?(Hash) ? (data['provisioningProfile'] || data) : {}
+        pid = prof['provisioningProfileId']
+        raise "响应里没有 provisioningProfileId :: #{data.inspect[0, 300]}" if pid.to_s.empty?
+
+        resp = portal.raw(:get, 'account/ios/profile/downloadProfileContent',
+                          teamId: TEAM_ID, provisioningProfileId: pid)
+        xml = resp.body.to_s
+        raise "下载到的描述文件是空的" if xml.strip.empty?
+
+        parsed = parse_profile_plist(xml)
+        ent = parsed['Entitlements'] || {}
+
+        log "PROFILE template=#{template.inspect} bundle=#{bundle} entitlements=#{ent.keys.inspect}"
+
+        if ent.key?('com.apple.developer.healthkit')
+          profile_xml = xml
+          profile_ent = ent
+          break
+        end
+
+        log "PROFILE_NO_HEALTHKIT template=#{template.inspect}"
+        profile_xml ||= xml
+        profile_ent = ent
       rescue StandardError => e
-        log "PROFILE_FAIL #{a.bundle_id} #{e.class}: #{e.message.to_s.lines.first.to_s.strip}"
+        log "PROFILE_FAIL #{bundle} template=#{template.inspect} #{e.class}: #{e.message.to_s.lines.first.to_s.strip}"
       end
     end
+
+    if profile_xml.nil?
+      log "PROFILE_MISSING #{bundle}"
+      manifest['targets'] << {
+        'bundle_id' => bundle, 'profile' => nil, 'entitlements' => {}, 'provisioned_devices' => []
+      }
+      next
+    end
+
+    safe = bundle.gsub(/[^A-Za-z0-9._-]/, '_')
+    path = File.join(OUT_DIR, "#{safe}.mobileprovision")
+    File.binwrite(path, profile_xml)
+
+    parsed = parse_profile_plist(profile_xml)
+    ent = parsed['Entitlements'] || profile_ent
+    dev = parsed['ProvisionedDevices'] || []
+
+    log "PROFILE_WRITTEN #{path} #{File.size(path)} bytes"
+    log "PROFILE_ENTITLEMENTS #{bundle} #{ent.inspect}"
+    log "PROFILE_DEVICES #{dev.inspect}"
+
+    manifest['targets'] << {
+      'bundle_id' => bundle,
+      'profile' => File.basename(path),
+      'entitlements' => ent,
+      'provisioned_devices' => dev,
+      'expires_at' => parsed['ExpirationDate'].to_s
+    }
   end
 else
   [app, widget].compact.each do |a|
-    manifest['targets'] << { 'bundle_id' => a.bundle_id, 'profile' => nil, 'entitlements' => {} }
+    manifest['targets'] << { 'bundle_id' => a['identifier'], 'profile' => nil, 'entitlements' => {} }
   end
 end
 
 File.write(File.join(OUT_DIR, 'manifest.json'), JSON.pretty_generate(manifest))
 log "MANIFEST_WRITTEN #{File.join(OUT_DIR, 'manifest.json')}"
+
+# --- 最后一道闸门：描述文件里必须真的有 HealthKit ---
+has_hk = manifest['targets'].any? do |t|
+  t['entitlements'].is_a?(Hash) && t['entitlements'].key?('com.apple.developer.healthkit')
+end
+log "HEALTHKIT_IN_PROFILES=#{has_hk ? 'YES' : 'NO'}"
 log 'PORTAL_DONE'
