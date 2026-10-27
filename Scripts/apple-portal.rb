@@ -107,7 +107,21 @@ module Spaceship
     alias_method :orig_handle_error, :handle_error
     def handle_error(response)
       self.probe_last_response = response
+      body = response.respond_to?(:body) ? response.body.to_s : ''
+      if body.include?('serviceErrors') || body.include?('message')
+        puts "[portal] RAW_ERROR status=#{response.status} body=#{body[0, 700]}"
+      end
       orig_handle_error(response)
+    end
+
+    alias_method :orig_request, :request
+    def request(method, url_or_path = nil, params = nil, headers = {}, auto_paginate = false, &block)
+      resp = orig_request(method, url_or_path, params, headers, auto_paginate, &block)
+      u = url_or_path.to_s
+      if u.include?('signin') && resp.respond_to?(:body)
+        puts "[portal] RAW #{method.to_s.upcase} #{u} -> #{resp.status} #{resp.body.to_s[0, 500]}"
+      end
+      resp
     end
 
     alias_method :orig_fetch_hashcash, :fetch_hashcash
