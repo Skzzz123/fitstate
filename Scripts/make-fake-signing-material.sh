@@ -18,8 +18,29 @@ GROUP="${GROUP:-group.97792VH57A.com.god.fitstate}"
 P12_PW="fitstate"
 
 # --- 一把自签证书，p12 / 描述文件 / 指纹三处共用 ---
+#
+# 扩展项要跟真的代码签名证书对齐（CA:FALSE + digitalSignature + codeSigning EKU），
+# 否则 macOS 的 codesigning 策略会直接把这个身份判为不可用。
+# 用 -config 而不是 -addext，LibreSSL / OpenSSL 都能吃。
+cat > build/sign-ext.cnf <<CNF
+[req]
+distinguished_name = dn
+x509_extensions = v3
+prompt = no
+
+[dn]
+CN = FitState Self Test
+O = FitState
+
+[v3]
+basicConstraints = critical,CA:FALSE
+keyUsage = critical,digitalSignature
+extendedKeyUsage = codeSigning
+subjectKeyIdentifier = hash
+CNF
+
 openssl req -x509 -newkey rsa:2048 -keyout build/sign-key.pem -out build/sign-cert.pem \
-  -days 3650 -nodes -subj "/CN=FitState Self Test" >/dev/null 2>&1
+  -days 3650 -nodes -config build/sign-ext.cnf >/dev/null 2>&1
 
 openssl pkcs12 -export -inkey build/sign-key.pem -in build/sign-cert.pem \
   -out "$OUT/portal.p12" -passout "pass:$P12_PW" -name "FitState Self Test" >/dev/null 2>&1

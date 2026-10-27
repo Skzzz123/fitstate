@@ -123,7 +123,14 @@ jobs:
           tail -3 build-unsigned.log
 
       - name: Make fake signing material
-        run: bash Scripts/make-fake-signing-material.sh build/portal
+        run: |
+          set -euo pipefail
+          bash Scripts/make-fake-signing-material.sh build/portal
+          # 真证书链到 Apple Root CA，macOS 系统自带信任；假证书是自签的，
+          # 必须手动加进系统信任库，否则 codesign 的 codesigning 策略会把它判为不可用。
+          sudo security add-trusted-cert -d -r trustRoot \
+            -k /Library/Keychains/System.keychain build/portal/portal.cer
+          echo "### 假证书已加入系统信任库"
 
       - name: Run sign-ipa.sh
         run: |
