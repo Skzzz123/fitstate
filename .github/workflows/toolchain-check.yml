@@ -69,3 +69,81 @@ jobs:
               exit 1
             end
           '
+
+  # ---------------------------------------------------------------------------
+  # 签名流水线自检：用假证书 + 假描述文件跑一遍 sign-ipa.sh，
+  # 把「解描述文件 → 提取 entitlements → 导入钥匙串 → codesign → 校验」
+  # 这套机械流程在没有 Apple 账号时也先验证一遍。
+  # ---------------------------------------------------------------------------
+  sign-self-test:
+    name: Signing pipeline self-test
+    runs-on: macos-15
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select latest Xcode
+        run: |
+          set -euo pipefail
+          XCODE="$(ls /Applications | grep -E '^Xcode.*\.app$' | sort -V | tail -1)"
+          sudo xcode-select -s "/Applications/$XCODE"
+          xcodebuild -version
+
+      - name: Install XcodeGen
+        run: |
+          set -euo pipefail
+          if ! command -v xcodegen >/dev/null 2>&1; then
+            brew install xcodegen
+          fi
+
+      - name: Generate Xcode project
+        run: xcodegen generate --spec project.yml
+
+      - name: Build (unsigned)
+        run: |
+          set -euo pipefail
+          xcodebuild \
+            -project FitState.xcodeproj \
+            -scheme FitState \
+            -configuration Release \
+            -sdk iphoneos \
+            -derivedDataPath build \
+            -destination 'generic/platform=iOS' \
+            APP_GROUP_ID="group.97792VH57A.com.god.fitstate" \
+            APP_GROUP_RUNTIME_ID="group.97792VH57A.com.god.fitstate" \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGN_STYLE=Manual \
+            DEVELOPMENT_TEAM="" \
+            PROVISIONING_PROFILE_SPECIFIER="" \
+            build > build-unsigned.log 2>&1 || { tail -40 build-unsigned.log; exit 1; }
+          tail -3 build-unsigned.log
+
+      - name: Make fake signing material
+        run: bash Scripts/make-fake-signing-material.sh build/portal
+
+      - name: Run sign-ipa.sh
+        run: |
+          set -euo pipefail
+          bash Scripts/sign-ipa.sh 2>&1 | tee build/sign.log
+          if ! grep -q "SIGN_OK" build/sign.log; then
+            echo "::error::签名流水线自测失败"
+            exit 1
+          fi
+
+      - name: Verify result
+        run: |
+          set -euo pipefail
+          APP="build/Build/Products/Release-iphoneos/FitState.app"
+          codesign -d --entitlements :- "$APP" > build/final-entitlements.plist || true
+          cat build/final-entitlements.plist
+          grep -q "com.apple.developer.healthkit" build/final-entitlements.plist
+          grep -q "com.apple.security.application-groups" build/final-entitlements.plist
+          echo "### App bundle id:"
+          /usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "$APP/Info.plist"
+          echo "### Widget bundle id:"
+          /usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "$APP/PlugIns/FitStateWidget.appex/Info.plist"
+          echo "SIGN_PIPELINE_OK"
