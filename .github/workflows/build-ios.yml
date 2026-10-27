@@ -16,6 +16,14 @@ on:
         description: '你的 Team ID（10 位大写字母数字，免费个人团队从签名工具改写后的 bundle id 末段取）'
         required: false
         default: '97792VH57A'
+      final_bundle_id:
+        description: '签名工具最终装到手机上的 bundle id（开了自动 bundle id 时是 <原 id>.<TeamID>）'
+        required: false
+        default: 'com.god.fitstate.97792VH57A'
+      device_udid:
+        description: '要装进去的设备 UDID（写进描述文件的 ProvisionedDevices）'
+        required: false
+        default: '00008140-00166C2636D2801C'
   push:
     branches: [main]
     paths:
@@ -145,6 +153,8 @@ jobs:
         env:
           TEAM_ID: ${{ inputs.team_id || vars.TEAM_ID || '97792VH57A' }}
           APP_GROUP_RUNTIME_ID: ${{ inputs.app_group_runtime_id || vars.APP_GROUP_RUNTIME_ID || 'group.com.god.fitstate' }}
+          FINAL_BUNDLE_ID: ${{ inputs.final_bundle_id || vars.FINAL_BUNDLE_ID || 'com.god.fitstate.97792VH57A' }}
+          DEVICE_UDID: ${{ inputs.device_udid || vars.DEVICE_UDID || '00008140-00166C2636D2801C' }}
         run: |
           set -euo pipefail
           APP_PATH="build/Build/Products/Release-iphoneos/FitState.app"
@@ -154,7 +164,20 @@ jobs:
           # 这个 app 需要哪些 capability（HealthKit / App Groups…），再去门户申请。
           # 没有这个文件，它只会建一个裸 App ID，签出来的包就没有 HealthKit 权限，
           # 装到手机上会直接报 "Missing com.apple.developer.healthkit entitlement"。
-          # 这里自己造一份描述文件：内容是标准 plist，外层用 CMS 封装。
+          #
+          # 这里自己造一份描述文件，要点：
+          #   1. 外层用 CMS 封装（签名工具用 PKCS#7 解析）
+          #   2. application-identifier 必须等于签名工具最终用的 bundle id
+          #   3. ProvisionedDevices 要包含目标设备 UDID
+          #   4. DeveloperCertificates 不能为空
+          #   5. CreationDate / ExpirationDate 要成对
+          openssl req -x509 -newkey rsa:2048 -keyout build/profile/key.pem -out build/profile/cert.pem \
+            -days 3650 -nodes -subj "/CN=FitState Profile" >/dev/null 2>&1
+          CERT_DER_B64=$(openssl x509 -in build/profile/cert.pem -outform DER | base64 | tr -d '\n')
+          NOW=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          EXP=$(date -u -v+7d +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d '+7 days' +%Y-%m-%dT%H:%M:%SZ)
+          UUID_VAL=$(uuidgen | tr '[:upper:]' '[:lower:]')
+
           cat > build/profile/profile.plist <<PLIST
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -163,36 +186,43 @@ jobs:
             <key>AppIDName</key><string>FitState</string>
             <key>ApplicationIdentifierPrefix</key>
             <array><string>${TEAM_ID}</string></array>
-            <key>CreationDate</key><date>2026-01-01T00:00:00Z</date>
+            <key>CreationDate</key><date>${NOW}</date>
             <key>Platform</key>
             <array><string>iOS</string></array>
+            <key>DeveloperCertificates</key>
+            <array>
+              <data>${CERT_DER_B64}</data>
+            </array>
             <key>Entitlements</key>
             <dict>
-              <key>application-identifier</key><string>${TEAM_ID}.com.god.fitstate</string>
+              <key>application-identifier</key><string>${TEAM_ID}.${FINAL_BUNDLE_ID}</string>
               <key>com.apple.developer.team-identifier</key>
               <array><string>${TEAM_ID}</string></array>
               <key>get-task-allow</key><true/>
               <key>keychain-access-groups</key>
-              <array><string>${TEAM_ID}.com.god.fitstate</string></array>
+              <array><string>${TEAM_ID}.${FINAL_BUNDLE_ID}</string></array>
               <key>com.apple.developer.healthkit</key><true/>
               <key>com.apple.developer.healthkit.access</key><array/>
               <key>com.apple.security.application-groups</key>
               <array><string>${APP_GROUP_RUNTIME_ID}</string></array>
             </dict>
+            <key>ExpirationDate</key><date>${EXP}</date>
+            <key>IsXcodeManaged</key><false/>
             <key>Name</key><string>FitState</string>
+            <key>ProvisionedDevices</key>
+            <array><string>${DEVICE_UDID}</string></array>
+            <key>ProvisionsAllDevices</key><false/>
             <key>TeamIdentifier</key>
             <array><string>${TEAM_ID}</string></array>
             <key>TeamName</key><string>FitState</string>
             <key>TimeToLive</key><integer>7</integer>
-            <key>UUID</key><string>00000000-0000-0000-0000-000000000000</string>
+            <key>UUID</key><string>${UUID_VAL}</string>
             <key>Version</key><integer>1</integer>
           </dict>
           </plist>
           PLIST
 
           # 自签一份 CMS 外壳，让签名工具能按 mobileprovision 的方式解析
-          openssl req -x509 -newkey rsa:2048 -keyout build/profile/key.pem -out build/profile/cert.pem \
-            -days 3650 -nodes -subj "/CN=FitState Profile" >/dev/null 2>&1
           openssl smime -sign -in build/profile/profile.plist -outform DER -nodetach -binary \
             -signer build/profile/cert.pem -inkey build/profile/key.pem \
             -out "$APP_PATH/embedded.mobileprovision"
