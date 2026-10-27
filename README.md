@@ -20,7 +20,8 @@
 | 云端 macOS 编译（GitHub Actions） | ✅ 跑通，每次 push 自动出 ipa |
 | App 装进 iPhone、能打开 | ✅ 已验证 |
 | 图标 | ✅ 换成你给的像素图（1024×1024，无透明通道） |
-| HealthKit 权限 | ⏳ **卡在 Apple 侧授权**，见第二节 |
+| 自签流水线（解描述文件 → 提 entitlements → codesign → 校验） | ✅ CI 用假证书完整跑通，签名里 healthkit + app groups 都在 |
+| HealthKit 权限 | ⏳ **只差一个 App 专用密码**，见第二节 |
 
 HealthKit 这项能力必须由 **Apple 在门户里给 App ID 授权**，任何第三方签名工具都做不到。
 Apple 官方能力矩阵
@@ -32,7 +33,9 @@ Apple 官方能力矩阵
 已排除的路径（都实测过）：
 
 - 把 entitlement 写进 ipa 签名 + 自造 `embedded.mobileprovision` → ❌ 装上仍报缺失
-- 免费账号在门户手工勾能力 → ❌ `identifiers/list` 返回 *Access Unavailable — only for developers enrolled in a developer program*
+- 免费账号在门户里手工勾能力（网页 UI 与 `identifiers/list` 等列表接口）→ ❌ 返回 *Access Unavailable — only for developers enrolled in a developer program*
+  （所以脚本**完全不依赖任何列表接口**：写操作直接打 `services-account` 的原始 action，
+  读不到就退化成「直接建、失败再换候选名」）
 - Sideloadly 免费版 → ❌ 二进制里根本没有 capability 名，只解析描述文件的 4 个键；能力清单来自 Patreon 认证的 `/caps` 接口
 - 只订阅 Patreon → ❌ 官方更新说明写明要 **Patreon + $99 会员**双条件
 
