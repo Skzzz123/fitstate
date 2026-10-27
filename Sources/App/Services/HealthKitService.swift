@@ -191,46 +191,51 @@ actor HealthKitService {
         return (start, end)
     }
 
-    private func fetchSleepSamples(from start: Date, to end: Date) async throws -> [HKCategorySample] {
+/// 通用只读样本查询。
+    ///
+    /// 这里用经典的 `HKSampleQuery` + continuation，而不是 iOS 17 新增的
+    /// `HKSampleQueryDescriptor`：前者从 iOS 8 至今签名稳定，跨 SDK 版本不会有类型差异。
+    private func querySamples(
+        _ sampleType: HKSampleType,
+        from start: Date,
+        to end: Date
+    ) async throws -> [HKSample] {
         let predicate = HKQuery.predicateForSamples(
             withStart: start,
             end: end,
             options: [.strictStartDate, .strictEndDate]
         )
-        let descriptor = HKSampleQueryDescriptor(
-            predicates: [predicate],
-            sortDescriptors: [SortDescriptor(\HKSample.startDate, order: .forward)]
-        )
-        let samples = try await descriptor.result(for: store)
+        let sort = NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: true)
+
+        return try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<[HKSample], Error>) in
+            let query = HKSampleQuery(
+                sampleType: sampleType,
+                predicate: predicate,
+                limit: HKObjectQueryNoLimit,
+                sortDescriptors: [sort]
+            ) { _, results, error in
+                if let error {
+                    continuation.resume(throwing: error)
+                } else {
+                    continuation.resume(returning: results ?? [])
+                }
+            }
+            store.execute(query)
+        }
+    }
+
+    private func fetchSleepSamples(from start: Date, to end: Date) async throws -> [HKCategorySample] {
+        let samples = try await querySamples(sleepType, from: start, to: end)
         return samples.compactMap { $0 as? HKCategorySample }
     }
 
     private func fetchQuantitySamples(_ type: HKQuantityType, from start: Date, to end: Date) async throws -> [HKQuantitySample] {
-        let predicate = HKQuery.predicateForSamples(
-            withStart: start,
-            end: end,
-            options: [.strictStartDate, .strictEndDate]
-        )
-        let descriptor = HKQuantityQueryDescriptor(
-            predicates: [predicate],
-            sortDescriptors: [SortDescriptor(\HKQuantitySample.startDate, order: .forward)],
-            quantityType: type
-        )
-        let samples = try await descriptor.result(for: store)
-        return samples
+        let samples = try await querySamples(type, from: start, to: end)
+        return samples.compactMap { $0 as? HKQuantitySample }
     }
 
     private func fetchWorkouts(from start: Date, to end: Date) async throws -> [HKWorkout] {
-        let predicate = HKQuery.predicateForSamples(
-            withStart: start,
-            end: end,
-            options: [.strictStartDate, .strictEndDate]
-        )
-        let descriptor = HKSampleQueryDescriptor(
-            predicates: [predicate],
-            sortDescriptors: [SortDescriptor(\HKWorkout.startDate, order: .forward)]
-        )
-        let samples = try await descriptor.result(for: store)
+        let samples = try await querySamples(HKObjectType.workoutType(), from: start, to: end)
         return samples.compactMap { $0 as? HKWorkout }
     }
 }

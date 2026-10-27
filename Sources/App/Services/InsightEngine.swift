@@ -39,9 +39,9 @@ enum InsightEngine {
         var results: [Insight] = []
 
         // ① 睡不满 vs 睡够 —— 第二天状态分的差别
-        if let shortSleep = points.filter({ ($0.sleepSeconds ?? 0) < 6 * 3600 && $0.score != nil }),
-           let enoughSleep = points.filter({ ($0.sleepSeconds ?? 0) >= 7.5 * 3600 && $0.score != nil }),
-           shortSleep.count >= 2, enoughSleep.count >= 2 {
+        let shortSleep = points.filter { ($0.sleepSeconds ?? 0) < 6 * 3600 && $0.score != nil }
+        let enoughSleep = points.filter { ($0.sleepSeconds ?? 0) >= 7.5 * 3600 && $0.score != nil }
+        if shortSleep.count >= 2, enoughSleep.count >= 2 {
             let shortAvg = shortSleep.compactMap(\.score).reduce(0, +) / Double(shortSleep.count)
             let longAvg = enoughSleep.compactMap(\.score).reduce(0, +) / Double(enoughSleep.count)
             let gap = longAvg - shortAvg

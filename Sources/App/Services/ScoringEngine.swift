@@ -215,8 +215,8 @@ enum ScoringEngine {
             var baselineText = Fmt.duration(baseline.sleepMedian ?? 0)
             if let deep = baseline.deepMedian, deep > 0 { baselineText += " · 深睡 \(Fmt.duration(deep))" }
             let deltaText: String
-            if let value = baseline.sleepMedian, baseline.sleepMedian > 0 {
-                let diff = today.totalSleep - baseline.sleepMedian
+            if let value = baseline.sleepMedian, value > 0 {
+                let diff = today.totalSleep - value
                 deltaText = diff >= 0 ? "高于基线 \(Fmt.duration(diff))" : "低于基线 \(Fmt.duration(-diff))"
             } else {
                 deltaText = "无基线对比"
