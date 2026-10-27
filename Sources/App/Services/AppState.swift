@@ -17,6 +17,10 @@ final class AppState: ObservableObject {
     @Published private(set) var authorization: AuthorizationState = .notDetermined
     @Published private(set) var isLoading = false
     @Published private(set) var lastUpdated: Date?
+    /// 备用数据源（Documents 里的 CSV）里有多少天数据
+    @Published private(set) var importedDays = 0
+    /// 当前数据是不是靠 CSV 兜底撑着的
+    @Published private(set) var usingImportedData = false
 
     @Published var errorMessage: String?
 
@@ -73,7 +77,34 @@ final class AppState: ObservableObject {
 
         do {
             let fetchDays = min(90, settings.baselineWindowDays + 30)
-            let fetched = try await health.fetchDailyMetrics(days: fetchDays)
+
+            // 备用数据源：Documents 目录里的 CSV。
+            // 万一 HealthKit 授权拿不到，它能撑住同样的分数与趋势。
+            let imported = ImportedHealthStore.load()
+            importedDays = imported.count
+
+            var fetched: [DailyMetrics] = []
+            var healthError: Error?
+            do {
+                fetched = try await health.fetchDailyMetrics(days: fetchDays)
+            } catch {
+                healthError = error
+            }
+
+            if let healthError {
+                // 有 CSV 兜底时不算出错，只是数据来自文件
+                errorMessage = imported.isEmpty ? healthError.localizedDescription : nil
+            }
+
+            // 合并：HealthKit 有的日子以它为准，缺的日子用 CSV 补上
+            let healthCount = fetched.count
+            if !imported.isEmpty {
+                let existing = Set(fetched.map { $0.dayKey })
+                fetched.append(contentsOf: imported.filter { !existing.contains($0.dayKey) })
+                fetched.sort { $0.dayKey < $1.dayKey }
+            }
+            usingImportedData = healthCount == 0 && !imported.isEmpty
+
             metrics = fetched
 
             authorization = await health.authorizationState()

@@ -13,6 +13,7 @@ struct SettingsView: View {
                 goalSection
                 baselineSection
                 dataSection
+                importSection
                 aboutSection
             }
             .padding(.horizontal, 16)
@@ -53,6 +54,13 @@ struct SettingsView: View {
                 .font(.system(size: 12.5))
                 .foregroundStyle(Theme.muted)
                 .fixedSize(horizontal: false, vertical: true)
+
+            if app.usingImportedData {
+                Text("当前显示的是 CSV 导入的数据，不是「健康」App 里的数据。")
+                    .font(.system(size: 12.5))
+                    .foregroundStyle(Theme.warn)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
 
             HStack(spacing: 10) {
                 Button {
@@ -197,6 +205,59 @@ struct SettingsView: View {
                     .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
             }
             .buttonStyle(.plain)
+        }
+        .cardStyle()
+    }
+
+    // MARK: - 备用数据源
+
+    private var importSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            SectionTitle(title: "备用数据源", subtitle: "HealthKit 读不到时的兜底：CSV")
+
+            HStack {
+                Text("导入文件")
+                    .font(.system(size: 14))
+                    .foregroundStyle(Theme.body)
+                Spacer()
+                Text(app.importedDays > 0 ? "已载入 \(app.importedDays) 天" : (ImportedHealthStore.exists ? "文件里没有可用数据" : "未找到"))
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(app.importedDays > 0 ? Theme.primary : Theme.muted)
+            }
+
+            Text("把 CSV 放进本 App 的「文件」目录：iPhone 上用「文件」App → 我的 iPhone → 状态；Windows 上用 iTunes 的文件共享拖进去。文件名固定为 \(ImportedHealthStore.fileName)，列依次是 日期,HRV(ms),静息心率(bpm),睡眠时长(min),深睡(min),REM(min),在床(min)。")
+                .font(.system(size: 12.5))
+                .foregroundStyle(Theme.muted)
+                .fixedSize(horizontal: false, vertical: true)
+
+            HStack(spacing: 10) {
+                Button {
+                    UIPasteboard.general.string = ImportedHealthStore.template
+                    app.errorMessage = "模板已复制到剪贴板"
+                } label: {
+                    Text("复制模板")
+                        .font(.system(size: 13.5, weight: .medium))
+                        .foregroundStyle(Theme.primary)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 10)
+                        .background(Theme.primary.opacity(0.10))
+                        .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
+                }
+                .buttonStyle(.plain)
+
+                Button {
+                    Task { await app.refresh() }
+                } label: {
+                    Text("重新读取")
+                        .font(.system(size: 13.5, weight: .medium))
+                        .foregroundStyle(Theme.muted)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 10)
+                        .background(Theme.hairline)
+                        .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
+                }
+                .buttonStyle(.plain)
+            }
         }
         .cardStyle()
     }
