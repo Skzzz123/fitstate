@@ -112,6 +112,7 @@ jobs:
         env:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APP_SPECIFIC_PASSWORD: ${{ secrets.APP_SPECIFIC_PASSWORD }}
+          APPLE_SESSION: ${{ secrets.APPLE_SESSION }}
           TEAM_ID: ${{ inputs.team_id || vars.TEAM_ID || '97792VH57A' }}
           DEVICE_UDID: ${{ inputs.device_udid || vars.DEVICE_UDID || '00008140-00166C2636D2801C' }}
           APP_GROUP_ID: ${{ inputs.app_group_id || vars.APP_GROUP_ID || 'group.com.god.fitstate' }}

@@ -174,14 +174,37 @@ def raw_login_probe
 end
 
 ENV['SPACESHIP_SKIP_2FA_UPGRADE'] = '1'
+
 client = nil
-['legacy', 'sirp'].each do |strategy|
+
+# --- 会话模式 -----------------------------------------------------------
+# GitHub Actions 的共享 runner IP 调 idmsa.apple.com 的 POST 偶尔会被 Apple 挡回 503，
+# 所以备用方案是：在自己机器上登录一次拿到 myacinfo 会话 cookie，
+# 塞进 APPLE_SESSION 环境变量，CI 直接复用这个会话，不再碰 idmsa 登录。
+#
+# additional_headers 会被合并进每一个请求头；我们的 cookie jar 是空的，
+# 不会覆盖这个显式 Cookie 头。
+session = ENV['APPLE_SESSION'].to_s.strip
+if !session.empty?
   begin
-    client = login_with_strategy(strategy)
-    log "LOGIN_OK strategy=#{strategy}"
-    break
+    client = Spaceship::PortalClient.new
+    client.additional_headers = { 'Cookie' => session }
+    log "SESSION_MODE 复用外部会话 cookie（长度 #{session.length}）"
   rescue StandardError => e
-    log "LOGIN_FAIL strategy=#{strategy} #{e.class}: #{e.message.to_s.lines.first.to_s.strip}"
+    log "SESSION_MODE_FAIL #{e.class}: #{e.message.to_s.lines.first.to_s.strip}"
+    client = nil
+  end
+end
+
+if client.nil?
+  ['legacy', 'sirp'].each do |strategy|
+    begin
+      client = login_with_strategy(strategy)
+      log "LOGIN_OK strategy=#{strategy}"
+      break
+    rescue StandardError => e
+      log "LOGIN_FAIL strategy=#{strategy} #{e.class}: #{e.message.to_s.lines.first.to_s.strip}"
+    end
   end
 end
 
