@@ -44,6 +44,11 @@ final class AppState: ObservableObject {
     /// 当前实际用的数据来源
     @Published private(set) var dataSource: DataSource = .none
 
+    /// 最近一次由 App Intent 写进来的记录（用来核对解析对不对）
+    var latestManualRecord: ManualDayRecord? {
+        ManualHealthStore.loadRecords().last
+    }
+
     @Published var errorMessage: String?
 
     @Published var settings: AppSettings = .default {

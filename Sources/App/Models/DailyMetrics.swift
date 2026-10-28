@@ -29,14 +29,23 @@ struct DailyMetrics: Codable, Identifiable, Equatable {
     /// 睡眠效率 = 实际睡着 / 在床时长
     var sleepEfficiency: Double? {
         guard totalSleep > 0 else { return nil }
+        // 没有「在床」时长就不知道效率。
+        // （早先这里把分母直接当成睡眠时长，结果会算出 100% 效率，属于虚高。）
+        guard inBed > 0 || awakeInBed > 0 else { return nil }
         let denominator = inBed > 0 ? inBed : (totalSleep + awakeInBed)
-        guard denominator > 0 else { return nil }
+        guard denominator > totalSleep else { return nil }
         return min(1.0, max(0.0, totalSleep / denominator))
     }
 
+    /// 是否拿到了睡眠分期（深睡 / REM）。
+    ///
+    /// 缺失时必须当作「未知」而不是「0% 修复性睡眠」：
+    /// 「快捷指令」简易模式只喂总睡眠时长，若按 0% 算，分期分会直接掉到 0 分。
+    var hasStagingData: Bool { deepSleep > 0 || remSleep > 0 }
+
     /// 深睡 + REM 占总睡眠的比例
     var restorativeRatio: Double? {
-        guard totalSleep > 0 else { return nil }
+        guard totalSleep > 0, hasStagingData else { return nil }
         return min(1.0, deepPlusREM / totalSleep)
     }
 }

@@ -50,16 +50,37 @@ struct RecordHealthDayIntent: AppIntent {
     @Parameter(title: "日期(YYYY-MM-DD，留空=今天)", default: "")
     var day: String
 
+    /// 「查找健康记录」选「睡眠分析」的原始输出，整包丢进来即可，
+    /// 深睡 / REM / 核心 / 清醒 / 在床 由 App 自己拆，省掉一串筛选求和动作。
+    @Parameter(title: "睡眠分析原始数据(可选)", default: "")
+    var sleepRawText: String
+
     func perform() async throws -> some IntentResult {
+        // 优先用原始睡眠数据；解析不出来才退回上面几个数字。
+        var totalSleepMinutes = max(0, sleepMinutes)
+        var deepMinutesValue = max(0, deepMinutes)
+        var remMinutesValue = max(0, remMinutes)
+        var inBedMinutesValue = max(0, inBedMinutes)
+
+        let parsed = SleepSampleParser.parse(sleepRawText)
+        if !parsed.isEmpty {
+            totalSleepMinutes = (parsed.asleep / 60).rounded()
+            deepMinutesValue = (parsed.deepSleep / 60).rounded()
+            remMinutesValue = (parsed.remSleep / 60).rounded()
+            if parsed.inBed > 0 {
+                inBedMinutesValue = (parsed.inBed / 60).rounded()
+            }
+        }
+
         let record = ManualDayRecord(
             dayKey: resolvedDayKey,
             date: resolvedDate,
             hrvMS: hrvMS > 0 ? hrvMS : nil,
             restingHR: restingHR > 0 ? restingHR : nil,
-            totalSleep: max(0, sleepMinutes) * 60,
-            deepSleep: max(0, deepMinutes) * 60,
-            remSleep: max(0, remMinutes) * 60,
-            inBed: max(0, inBedMinutes) * 60,
+            totalSleep: totalSleepMinutes * 60,
+            deepSleep: deepMinutesValue * 60,
+            remSleep: remMinutesValue * 60,
+            inBed: inBedMinutesValue * 60,
             updatedAt: Date()
         )
 
@@ -69,8 +90,16 @@ struct RecordHealthDayIntent: AppIntent {
 
         WidgetCenter.shared.reloadAllTimelines()
 
+        var sleepText = ""
+        if record.totalSleep > 0 {
+            sleepText = "，睡眠 \(Int((record.totalSleep / 60).rounded())) 分钟"
+            if record.deepSleep > 0 || record.remSleep > 0 {
+                sleepText += "（深睡 \(Int((record.deepSleep / 60).rounded())) / REM \(Int((record.remSleep / 60).rounded()))）"
+            }
+        }
+
         let scoreText = currentScoreText()
-        return .result(dialog: "已记录 \(record.dayKey)\(scoreText)")
+        return .result(dialog: "已记录 \(record.dayKey)\(sleepText)\(scoreText)")
     }
 
     // MARK: - 私有

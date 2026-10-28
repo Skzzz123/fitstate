@@ -40,6 +40,26 @@ struct ManualDayRecord: Codable, Equatable {
         m.awakeInBed = max(0, inBed - totalSleep)
         return m
     }
+
+    /// 一行摘要，给「设置」页核对解析对不对用。
+    var describe: String {
+        var parts: [String] = []
+        parts.append("HRV \(hrvMS.map { String(format: "%.0f", $0) } ?? "—") ms")
+        parts.append("静息心率 \(restingHR.map { String(format: "%.0f", $0) } ?? "—") bpm")
+        if totalSleep > 0 {
+            var text = "睡眠 \(Int((totalSleep / 60).rounded())) 分钟"
+            if deepSleep > 0 || remSleep > 0 {
+                text += "（深睡 \(Int((deepSleep / 60).rounded())) / REM \(Int((remSleep / 60).rounded()))）"
+            }
+            parts.append(text)
+        } else {
+            parts.append("睡眠 —")
+        }
+        if inBed > 0 {
+            parts.append("在床 \(Int((inBed / 60).rounded())) 分钟")
+        }
+        return parts.joined(separator: " · ")
+    }
 }
 
 enum ManualHealthStore {

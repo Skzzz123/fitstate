@@ -131,6 +131,18 @@ struct SettingsView: View {
                     .foregroundStyle(app.manualDays > 0 ? Theme.primary : Theme.muted)
             }
 
+            if let last = app.latestManualRecord {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("最近一次：\(last.dayKey)")
+                        .font(.system(size: 12.5, design: .monospaced))
+                        .foregroundStyle(Theme.body)
+                    Text(last.describe)
+                        .font(.system(size: 12, design: .monospaced))
+                        .foregroundStyle(Theme.muted)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+
             Text("① 打开「快捷指令」→ 新建 → 搜索「查找健康记录」→ 选「心率变异性 (SDNN)」\n② 再加一个「查找健康记录」→ 选「静息心率」\n③ 再加一个「查找健康记录」→ 选「睡眠分析」\n④ 加一个「运行 App」动作 → 选 FitState 的「记录今日健康数据」，把上面三个值填进去\n⑤ 顶部点「自动化」→ 新建 → 时间「每天早上 7:00」→ 依次选刚才的动作")
                 .font(.system(size: 12.5))
                 .foregroundStyle(Theme.body)
