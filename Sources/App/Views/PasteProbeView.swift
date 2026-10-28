@@ -180,24 +180,10 @@ struct PasteProbeView: View {
             }
 
             if !result.sleep.isEmpty {
-                var detailParts: [String] = ["读到 \(result.sleep.sampleCount) 段"]
-                if result.sleep.deepSleep > 0 {
-                    detailParts.append("深睡 \(Int((result.sleep.deepSleep / 60).rounded())) 分")
-                }
-                if result.sleep.remSleep > 0 {
-                    detailParts.append("REM \(Int((result.sleep.remSleep / 60).rounded())) 分")
-                }
-                if result.sleep.coreSleep > 0 {
-                    detailParts.append("核心 \(Int((result.sleep.coreSleep / 60).rounded())) 分")
-                }
-                if result.sleep.inBed > 0 {
-                    detailParts.append("在床 \(Int((result.sleep.inBed / 60).rounded())) 分")
-                }
-
                 metricRow(
                     label: "睡眠总时长",
                     value: Fmt.duration(result.sleep.totalSleep),
-                    detail: detailParts.joined(separator: " · ")
+                    detail: sleepDetailText(result.sleep)
                 )
             }
 
@@ -222,6 +208,33 @@ struct PasteProbeView: View {
             }
         }
         .cardStyle()
+    }
+
+    /// 睡眠分段的明细文案。
+    ///
+    /// 刻意做成普通函数而不是塞在 ViewBuilder 里 ——
+    /// ViewBuilder 里 `if` 分支必须产出 View，`append` 返回 Void 会直接编译不过。
+    private func sleepDetailText(_ sleep: HealthTextParser.SleepBreakdown) -> String {
+        var parts: [String] = ["读到 \(sleep.sampleCount) 段"]
+        if sleep.deepSleep > 0 {
+            parts.append("深睡 \(Int((sleep.deepSleep / 60).rounded())) 分")
+        }
+        if sleep.remSleep > 0 {
+            parts.append("REM \(Int((sleep.remSleep / 60).rounded())) 分")
+        }
+        if sleep.coreSleep > 0 {
+            parts.append("核心 \(Int((sleep.coreSleep / 60).rounded())) 分")
+        }
+        if sleep.unspecifiedSleep > 0 {
+            parts.append("未分期 \(Int((sleep.unspecifiedSleep / 60).rounded())) 分")
+        }
+        if sleep.awakeInBed > 0 {
+            parts.append("清醒 \(Int((sleep.awakeInBed / 60).rounded())) 分")
+        }
+        if sleep.inBed > 0 {
+            parts.append("在床 \(Int((sleep.inBed / 60).rounded())) 分")
+        }
+        return parts.joined(separator: " · ")
     }
 
     private func metricRow(label: String, value: String, detail: String) -> some View {

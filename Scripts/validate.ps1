@@ -268,6 +268,46 @@ foreach ($y in @('project.yml', '.github\workflows\build-ios.yml')) {
 }
 Info "YAML 检查完毕"
 
+# ---------------------------------------------------------------- 9. ViewBuilder 里的 Void 语句
+#
+# SwiftUI 的 ViewBuilder 要求 if 分支产出 View。
+# `if 条件 { 某数组.append(x) }` 里 append 返回 Void，会报
+# "type '()' cannot conform to 'View'" —— 而且只在 xcodebuild 时才暴露，
+# 每次改代码都要等一轮 CI。这里提前扫出来。
+Write-Output "`n=== 9. ViewBuilder Void 语句检查 ==="
+$viewFiles = $swift | Where-Object { $_.FullName -match '\\Sources\\(App|Widget)\\Views\\' }
+foreach ($f in $viewFiles) {
+  $lines = Get-Content $f.FullName -Encoding UTF8
+  $inBuilder = $false
+  $braceDepth = 0
+  for ($i = 0; $i -lt $lines.Count; $i++) {
+    $line = $lines[$i]
+    $code = [regex]::Replace($line, '(?m)//.*$', '')
+
+    # 进入 ViewBuilder：var body: some View { ... }
+    # 大括号计数从「var body」那一行就开始算，否则后面每层的深度都会错位。
+    if ($code -match 'var\s+body\s*:\s*some\s+View\s*\{') {
+      $inBuilder = $true
+      $braceDepth = ([regex]::Matches($code, '\{')).Count - ([regex]::Matches($code, '\}')).Count
+      continue
+    }
+    if ($code -match '^\s*(private\s+)?func\s+\w+\s*\(') { $inBuilder = $false; continue }
+
+    if ($inBuilder) {
+      $opens = ([regex]::Matches($code, '\{')).Count
+      $closes = ([regex]::Matches($code, '\}')).Count
+      $braceDepth += $opens - $closes
+      if ($braceDepth -le 0 -and $closes -gt 0) { $inBuilder = $false; continue }
+
+      # 形如 xxx.append(...) / xxx.removeAll() / xxx.insert(...) 这类 Void 语句独占一行
+      if ($code -match '^\s*[A-Za-z_][A-Za-z0-9_\.]*\.(append|removeAll|removeLast|insert|remove)\(') {
+        $errors.Add("ViewBuilder 内出现 Void 语句（会导致 type '()' cannot conform to 'View'）: $($f.Name) 第 $($i+1) 行")
+      }
+    }
+  }
+}
+Info "ViewBuilder 检查完毕"
+
 # ---------------------------------------------------------------- 汇总
 Write-Output "`n================ 结果 ================"
 if ($errors.Count -eq 0) {
