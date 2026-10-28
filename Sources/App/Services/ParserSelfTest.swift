@@ -241,6 +241,60 @@ enum ParserSelfTest {
             }
         ))
 
+        // —— 13. 合并规则：新记录没有睡眠 → 保留旧的那一组
+        report.cases.append(check(
+            "合并：新数据没睡眠 → 保留旧的",
+            {
+                let old = ManualDayRecord(
+                    dayKey: "2026-10-28", date: Date(), hrvMS: 48, restingHR: 54,
+                    totalSleep: 8 * 3600, deepSleep: 90 * 60, remSleep: 120 * 60, inBed: 30600)
+                let new = ManualDayRecord(
+                    dayKey: "2026-10-28", date: Date(), hrvMS: 50, restingHR: nil,
+                    totalSleep: 0, deepSleep: 0, remSleep: 0, inBed: 0)
+                let out = ManualHealthStore.merged(new, with: old)
+                guard out.totalSleep == old.totalSleep,
+                      out.deepSleep == old.deepSleep,
+                      out.remSleep == old.remSleep,
+                      out.inBed == old.inBed else {
+                    return (false, "睡眠被覆盖成 \(Int(out.totalSleep / 60)) 分")
+                }
+                guard out.restingHR == 54 else {
+                    return (false, "静息心率被抹成 \(out.restingHR.map { String(format: "%.0f", $0) } ?? "nil")")
+                }
+                guard out.hrvMS == 50 else {
+                    return (false, "HRV 没更新成新值")
+                }
+                return (true, "睡眠保留 480 分 / 静息心率保留 54 / HRV 更新为 50")
+            }
+        ))
+
+        // —— 14. 合并规则：新记录有睡眠 → 整组用新的
+        report.cases.append(check(
+            "合并：新数据有睡眠 → 整组用新的",
+            {
+                let old = ManualDayRecord(
+                    dayKey: "2026-10-28", date: Date(), hrvMS: 48, restingHR: 54,
+                    totalSleep: 8 * 3600, deepSleep: 90 * 60, remSleep: 120 * 60, inBed: 30600)
+                let new = ManualDayRecord(
+                    dayKey: "2026-10-28", date: Date(), hrvMS: nil, restingHR: 56,
+                    totalSleep: 7 * 3600, deepSleep: 60 * 60, remSleep: 90 * 60, inBed: 27000)
+                let out = ManualHealthStore.merged(new, with: old)
+                guard out.totalSleep == 7 * 3600,
+                      out.deepSleep == 60 * 60,
+                      out.remSleep == 90 * 60,
+                      out.inBed == 27000 else {
+                    return (false, "睡眠没整组替换")
+                }
+                guard out.hrvMS == 48 else {
+                    return (false, "HRV 丢了")
+                }
+                guard out.restingHR == 56 else {
+                    return (false, "静息心率没更新")
+                }
+                return (true, "睡眠整组换成 420 分 / HRV 保留 48 / 静息心率更新 56")
+            }
+        ))
+
         return report
     }
 

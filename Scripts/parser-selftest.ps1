@@ -409,6 +409,51 @@ Assert-Case 'zero-duration segment not counted' {
     return @($true, "0 segments")
 }
 
+# --- merge rule (mirrors ManualHealthStore.merged) ---
+function Merge-Record($new, $old) {
+    if ($null -eq $old) { return $new }
+    if ($null -eq $new.Hrv) { $new.Hrv = $old.Hrv }
+    if ($null -eq $new.Rhr) { $new.Rhr = $old.Rhr }
+    if ($new.SleepTotal -le 0 -and $old.SleepTotal -gt 0) {
+        $new.SleepTotal = $old.SleepTotal
+        $new.SleepDeep = $old.SleepDeep
+        $new.SleepRem = $old.SleepRem
+        $new.SleepInBed = $old.SleepInBed
+    }
+    return $new
+}
+
+function New-Rec($hrv, $rhr, $total, $deep, $rem, $inbed) {
+    return [pscustomobject]@{
+        Hrv = $hrv; Rhr = $rhr
+        SleepTotal = $total; SleepDeep = $deep; SleepRem = $rem; SleepInBed = $inbed
+    }
+}
+
+Assert-Case 'merge: new without sleep keeps old' {
+    $old = New-Rec 48 54 28800 5400 7200 30600
+    $new = New-Rec 50 $null 0 0 0 0
+    $o = Merge-Record $new $old
+    if ($o.SleepTotal -ne 28800 -or $o.SleepDeep -ne 5400 -or $o.SleepRem -ne 7200 -or $o.SleepInBed -ne 30600) {
+        return @($false, "sleep overwritten to $($o.SleepTotal)")
+    }
+    if ($o.Rhr -ne 54) { return @($false, "rhr lost") }
+    if ($o.Hrv -ne 50) { return @($false, "hrv not updated") }
+    return @($true, "sleep kept 480 min / rhr kept 54 / hrv updated 50")
+}
+
+Assert-Case 'merge: new with sleep replaces whole group' {
+    $old = New-Rec 48 54 28800 5400 7200 30600
+    $new = New-Rec $null 56 25200 3600 5400 27000
+    $o = Merge-Record $new $old
+    if ($o.SleepTotal -ne 25200 -or $o.SleepDeep -ne 3600 -or $o.SleepRem -ne 5400 -or $o.SleepInBed -ne 27000) {
+        return @($false, "sleep group not replaced")
+    }
+    if ($o.Hrv -ne 48) { return @($false, "hrv lost") }
+    if ($o.Rhr -ne 56) { return @($false, "rhr not updated") }
+    return @($true, "sleep group replaced 420 min / hrv kept 48 / rhr updated 56")
+}
+
 Write-Output "=============================================================="
 Write-Output "TOTAL | $pass/$($pass + $fail) passed"
 if ($fail -gt 0) { exit 1 }

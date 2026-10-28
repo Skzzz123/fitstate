@@ -97,12 +97,57 @@ enum ManualHealthStore {
         var records = loadRecords()
         records.removeAll { $0.dayKey == record.dayKey }
         records.append(record)
-        records.sort { $0.dayKey < $1.dayKey }
+        return write(records)
+    }
 
+    /// 合并规则（纯函数，方便单测）
+    ///
+    /// - 新值有（non-nil / > 0）就用新值
+    /// - 新值没有就保留旧值
+    /// - 睡眠四项整组处理，不混搭
+    static func merged(_ new: ManualDayRecord, with old: ManualDayRecord?) -> ManualDayRecord {
+        guard let old else { return new }
+        var out = new
+        if out.hrvMS == nil { out.hrvMS = old.hrvMS }
+        if out.restingHR == nil { out.restingHR = old.restingHR }
+        if out.totalSleep <= 0 && old.totalSleep > 0 {
+            out.totalSleep = old.totalSleep
+            out.deepSleep = old.deepSleep
+            out.remSleep = old.remSleep
+            out.inBed = old.inBed
+        }
+        return out
+    }
+
+    /// 同一天重复记录时**合并**，而不是整条覆盖。
+    ///
+    /// 为什么必须有这个
+    /// ----------------
+    /// 快捷指令有三条**互相独立**的通道，任何一条偶发失败（最常见的是
+    /// 「查找健康记录(睡眠分析)」当天返回空、或者某条输出格式没认出来）
+    /// 都不该把这一天**已经记好的数据抹成 0**。
+    /// 30 天基线是靠每天一条攒出来的，抹掉一天基线就偏了，而且用户根本
+    /// 不会察觉 —— 屏幕上只是「今天睡眠 0 分钟」。
+    ///
+    /// 返回真正落盘的那条记录（合并后的），落盘失败返回 nil。
+    @discardableResult
+    static func upsertMerging(_ record: ManualDayRecord) -> ManualDayRecord? {
+        var records = loadRecords()
+        let merged = Self.merged(record, with: records.first { $0.dayKey == record.dayKey })
+        records.removeAll { $0.dayKey == merged.dayKey }
+        records.append(merged)
+        guard write(records) else { return nil }
+        return merged
+    }
+
+    /// 落盘 + 广播
+    private static func write(_ records: [ManualDayRecord]) -> Bool {
+        var sorted = records
+        sorted.sort { $0.dayKey < $1.dayKey }
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        guard let data = try? encoder.encode(records) else { return false }
+        guard let data = try? encoder.encode(sorted) else { return false }
         do {
             try data.write(to: fileURL, options: .atomic)
         } catch {

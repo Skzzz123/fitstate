@@ -48,7 +48,10 @@ struct RecordHealthDayIntent: AppIntent {
     var rhrRawText: String
 
     /// 直接填数字（三个「查找」动作之后用「数学」算好的单值）。
-    /// 填了之后同一项的原始数据通道会被忽略。
+    ///
+    /// 优先级是**逐项**的：这一项你填了数（> 0）就以你填的为准，
+    /// 没填（0）就沿用原始数据通道解析出来的结果。
+    /// 所以「只填睡眠时长、其余留空」也能拿到文本里的深睡 / REM 分期。
     @Parameter(title: "HRV(ms)", default: 0)
     var hrvMS: Double
 
@@ -80,11 +83,11 @@ struct RecordHealthDayIntent: AppIntent {
         var notes: [String] = []
         var diagnostics: [String] = []
 
-        // —— 睡眠
-        var totalSleep = max(0, sleepMinutes) * 60
-        var deep = max(0, deepMinutes) * 60
-        var rem = max(0, remMinutes) * 60
-        var inBed = max(0, inBedMinutes) * 60
+        // —— 睡眠：先解析原始文本，再让「你填的数字」逐项覆盖
+        var totalSleep = 0.0
+        var deep = 0.0
+        var rem = 0.0
+        var inBed = 0.0
 
         if !sleepRawText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             let parsed = HealthTextParser.parse(sleepRawText, hint: .sleep(.unspecified))
@@ -106,12 +109,18 @@ struct RecordHealthDayIntent: AppIntent {
                 diagnostics.append("睡眠：完全没解析出分段。原文前 120 字：" + sleepRawText.prefix(120))
             }
         }
+        // 数字参数逐项优先（填了 > 0 的以你填的为准，没填的留上面的解析结果）
+        if sleepMinutes > 0 { totalSleep = sleepMinutes * 60 }
+        if deepMinutes > 0 { deep = deepMinutes * 60 }
+        if remMinutes > 0 { rem = remMinutes * 60 }
+        if inBedMinutes > 0 { inBed = inBedMinutes * 60 }
+
         // —— HRV：原始列表取中位数（抗离群），否则用单值
-        var hrvValue: Double? = hrvMS > 0 ? hrvMS : nil
+        var hrvValue: Double? = nil
         if !hrvRawText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             let parsed = HealthTextParser.parse(hrvRawText, hint: .hrv)
             if !parsed.hrvValues.isEmpty {
-                hrvValue = Stats.median(parsed.hrvValues)
+                hrvValue = NumericSampleParser.median(parsed.hrvValues)
                 notes.append("HRV：读到 \(parsed.hrvValues.count) 个值，取中位数")
                 if debug != 0 {
                     diagnostics.append("HRV 全部值：" + parsed.hrvValues.map { String(format: "%.0f", $0) }.joined(separator: ", "))
@@ -121,13 +130,14 @@ struct RecordHealthDayIntent: AppIntent {
                 diagnostics.append("HRV：没解析出数值。原文前 120 字：" + hrvRawText.prefix(120))
             }
         }
+        if hrvMS > 0 { hrvValue = hrvMS }
 
         // —— 静息心率：原始列表取平均，否则用单值
-        var rhrValue: Double? = restingHR > 0 ? restingHR : nil
+        var rhrValue: Double? = nil
         if !rhrRawText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             let parsed = HealthTextParser.parse(rhrRawText, hint: .rhr)
             if !parsed.rhrValues.isEmpty {
-                rhrValue = Stats.average(parsed.rhrValues)
+                rhrValue = NumericSampleParser.average(parsed.rhrValues)
                 notes.append("静息心率：读到 \(parsed.rhrValues.count) 个值，取平均")
                 if debug != 0 {
                     diagnostics.append("静息心率全部值：" + parsed.rhrValues.map { String(format: "%.0f", $0) }.joined(separator: ", "))
@@ -137,6 +147,7 @@ struct RecordHealthDayIntent: AppIntent {
                 diagnostics.append("静息心率：没解析出数值。原文前 120 字：" + rhrRawText.prefix(120))
             }
         }
+        if restingHR > 0 { rhrValue = restingHR }
 
         // 什么都没读到就别写脏数据
         guard hrvValue != nil || rhrValue != nil || totalSleep > 0 else {
@@ -157,24 +168,25 @@ struct RecordHealthDayIntent: AppIntent {
             updatedAt: Date()
         )
 
-        guard ManualHealthStore.upsert(record) else {
+        // 合并写入：某条通道偶发失败，不会把这一天**已有**的数据抹成 0
+        guard let stored = ManualHealthStore.upsertMerging(record) else {
             return .result(dialog: "写入失败。")
         }
 
         WidgetCenter.shared.reloadAllTimelines()
 
         var sleepText = ""
-        if record.totalSleep > 0 {
-            sleepText = "，睡眠 \(Int((record.totalSleep / 60).rounded())) 分钟"
-            if record.deepSleep > 0 || record.remSleep > 0 {
-                sleepText += "（深睡 \(Int((record.deepSleep / 60).rounded())) / REM \(Int((record.remSleep / 60).rounded()))）"
+        if stored.totalSleep > 0 {
+            sleepText = "，睡眠 \(Int((stored.totalSleep / 60).rounded())) 分钟"
+            if stored.deepSleep > 0 || stored.remSleep > 0 {
+                sleepText += "（深睡 \(Int((stored.deepSleep / 60).rounded())) / REM \(Int((stored.remSleep / 60).rounded()))）"
             }
         }
 
-        let scoreText = currentScoreText()
+        let scoreText = currentScoreText(for: stored)
         let noteText = notes.isEmpty ? "" : "｜" + notes.joined(separator: "；")
         let debugText = (debug != 0 && !diagnostics.isEmpty) ? "｜" + diagnostics.joined(separator: "｜") : ""
-        return .result(dialog: "已记录 \(record.dayKey)\(sleepText)\(scoreText)\(noteText)\(debugText)")
+        return .result(dialog: "已记录 \(stored.dayKey)\(sleepText)\(scoreText)\(noteText)\(debugText)")
     }
 
     // MARK: - 私有
@@ -195,19 +207,22 @@ struct RecordHealthDayIntent: AppIntent {
         return Calendar.current.startOfDay(for: Date())
     }
 
-    /// 顺手把今天的分数算出来，回给用户当确认。
-    private func currentScoreText() -> String {
+    /// 顺手把刚记上这一天的分数算出来，回给用户当确认。
+    ///
+    /// 用的是**刚写进去的那条记录**，不是「库里最后一条」——
+    /// 补记昨天的时候「库里最后一条」可能是今天，会算错对象。
+    private func currentScoreText(for record: ManualDayRecord) -> String {
         let metrics = ManualHealthStore.load()
-        guard let today = metrics.last else { return "" }
         let settings = AppSettings().load()
         let baseline = BaselineEngine.build(
             from: metrics,
             windowDays: settings.baselineWindowDays,
-            excluding: today.dayKey
+            excluding: record.dayKey
         )
-        let result = ScoringEngine.evaluate(today: today, baseline: baseline, settings: settings)
+        let result = ScoringEngine.evaluate(today: record.metrics, baseline: baseline, settings: settings)
         guard let score = result.score, let tier = result.tier else { return "" }
-        return "，今日状态分 \(Int(score.rounded()))（\(tier.label)）"
+        let isToday = record.dayKey == Fmt.dayKey(Date())
+        return "，\(isToday ? "今日" : "当日")状态分 \(Int(score.rounded()))（\(tier.label)）"
     }
 }
 
@@ -254,12 +269,12 @@ struct RecordHealthDayFromTextIntent: AppIntent {
             updatedAt: Date()
         )
 
-        guard ManualHealthStore.upsert(record) else {
+        guard let stored = ManualHealthStore.upsertMerging(record) else {
             return .result(dialog: "写入失败。")
         }
 
         WidgetCenter.shared.reloadAllTimelines()
-        return .result(dialog: "已记录 \(record.dayKey)")
+        return .result(dialog: "已记录 \(stored.dayKey)")
     }
 }
 
