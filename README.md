@@ -198,12 +198,26 @@ Actions → **Build iOS App** → **Run workflow**，`sign_mode` 选 **`portal`*
 
 ### `portal` 模式的校验点
 
-- 主程序二进制、小组件扩展、小组件二进制必须都在
+- 主程序二进制、小小组件扩展、小组件二进制必须都在
 - 最终 ipa 不得小于 50 KB
 - 描述文件里必须有 `com.apple.developer.healthkit`
 - 描述文件里必须有 `com.apple.security.application-groups`
 - 描述文件的 `ProvisionedDevices` 里必须有你的设备 UDID
 - 最终签名的 entitlements 里必须有 `com.apple.developer.healthkit`
+
+### 静态校验（`Scripts/validate.ps1`）
+
+本机没有 Mac，Swift 代码只能靠云端编译验证 —— 一次往返好几分钟。
+所以校验器除了常规检查（结构、括号配平、类型重名、import 匹配、
+Info.plist 键、YAML），还预检了几类**只在 xcodebuild 时才暴露**的编译错误：
+
+| 检查项 | 典型报错 |
+|---|---|
+| 9. ViewBuilder 里的 Void 语句 | `type '()' cannot conform to 'View'` |
+| 10. Swift 保留字当标识符 | `'case' label can only appear inside a 'switch' statement` |
+
+这两条规则都做过**反向验证**（故意写一段坏代码，确认校验器能精准定位到那一行），
+避免「规则本身是坏的」这种更隐蔽的问题。
 
 ---
 
@@ -304,7 +318,7 @@ fitstate/
 ├── Scripts/
 │   ├── apple-portal.rb               # 门户直开能力 + 申请证书与描述文件
 │   ├── sign-ipa.sh                   # 用自有证书 + 描述文件正签
-│   └── validate.ps1                  # 静态校验
+│   └── validate.ps1                  # 静态校验（10 项，含 Swift 编译期常见错误预检）
 ├── Sources/
 │   ├── Shared/                       # 主 App 与小组件共用
 │   │   ├── AppGroup.swift            #   App Group 容器

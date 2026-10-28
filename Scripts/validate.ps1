@@ -350,6 +350,24 @@ foreach ($f in $swift) {
 }
 Info "保留字检查完毕（命中 $kwHits 处）"
 
+# ---------------------------------------------------------------- 11. 解析器逻辑自测
+#
+# 解析器是整个 0 元路线的地基：解析错了，分数就是错的，
+# 而且用户要等重装 App 才能发现。本机没有 Mac，
+# 所以这里跑一份等价逻辑镜像（Scripts/parser-selftest.ps1），
+# 覆盖最容易悄悄算错的地方：跨零点的睡眠时段、多值取中位数、
+# 没有单位时靠通道归类、认不出来的片段不污染数据。
+Write-Output "`n=== 11. 解析器逻辑自测 ==="
+$selftest = Join-Path $root 'Scripts\parser-selftest.ps1'
+if (Test-Path $selftest) {
+  & powershell -NoProfile -ExecutionPolicy Bypass -File $selftest | ForEach-Object { Info $_ }
+  if ($LASTEXITCODE -ne 0) {
+    $errors.Add("解析器逻辑自测未通过（Scripts\parser-selftest.ps1）")
+  }
+} else {
+  $warnings.Add("找不到 Scripts\parser-selftest.ps1，跳过解析器自测")
+}
+
 # ---------------------------------------------------------------- 汇总
 Write-Output "`n================ 结果 ================"
 if ($errors.Count -eq 0) {
