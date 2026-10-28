@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<HealthData locale="zh_CN">
+ <Record type="HKQuantityTypeIdentifierHeartRateVariabilitySDNN" sourceName="Apple Watch" unit="s" creationDate="2026-10-26 07:00:00 +0800" startDate="2026-10-26 07:00:00 +0800" endDate="2026-10-26 07:00:00 +0800" value="0.048"/>
+ <Record type="HKQuantityTypeIdentifierHeartRateVariabilitySDNN" sourceName="Apple Watch" unit="s" creationDate="2026-10-26 23:10:00 +0800" startDate="2026-10-26 23:10:00 +0800" endDate="2026-10-26 23:10:00 +0800" value="0.052"/>
+ <Record type="HKQuantityTypeIdentifierHeartRateVariabilitySDNN" sourceName="Apple Watch" unit="s" creationDate="2026-10-26 23:40:00 +0800" startDate="2026-10-26 23:40:00 +0800" endDate="2026-10-26 23:40:00 +0800" value="0.044"/>
+ <Record type="HKQuantityTypeIdentifierHeartRateVariabilitySDNN" sourceName="Apple Watch" unit="s" creationDate="2026-10-27 08:00:00 +0800" startDate="2026-10-27 08:00:00 +0800" endDate="2026-10-27 08:00:00 +0800" value="0.061"/>
+ <Record type="HKQuantityTypeIdentifierRestingHeartRate" sourceName="Apple Watch" unit="count/min" creationDate="2026-10-26 09:00:00 +0800" startDate="2026-10-26 09:00:00 +0800" endDate="2026-10-26 09:00:00 +0800" value="54"/>
+ <Record type="HKQuantityTypeIdentifierRestingHeartRate" sourceName="Apple Watch" unit="count/min" creationDate="2026-10-26 20:00:00 +0800" startDate="2026-10-26 20:00:00 +0800" endDate="2026-10-26 20:00:00 +0800" value="58"/>
+ <Record type="HKQuantityTypeIdentifierRestingHeartRate" sourceName="Apple Watch" unit="count/min" creationDate="2026-10-27 09:00:00 +0800" startDate="2026-10-27 09:00:00 +0800" endDate="2026-10-27 09:00:00 +0800" value="56"/>
+ <Record type="HKCategoryTypeIdentifierSleepAnalysis" sourceName="Apple Watch" creationDate="2026-10-26 23:00:00 +0800" startDate="2026-10-26 23:00:00 +0800" endDate="2026-10-27 00:00:00 +0800" value="HKCategoryValueSleepAnalysisAsleepDeep"/>
+ <Record type="HKCategoryTypeIdentifierSleepAnalysis" sourceName="Apple Watch" creationDate="2026-10-27 00:00:00 +0800" startDate="2026-10-27 00:00:00 +0800" endDate="2026-10-27 01:30:00 +0800" value="HKCategoryValueSleepAnalysisAsleepREM"/>
+ <Record type="HKCategoryTypeIdentifierSleepAnalysis" sourceName="Apple Watch" creationDate="2026-10-27 01:30:00 +0800" startDate="2026-10-27 01:30:00 +0800" endDate="2026-10-27 04:30:00 +0800" value="HKCategoryValueSleepAnalysisAsleepCore"/>
+ <Record type="HKCategoryTypeIdentifierSleepAnalysis" sourceName="Apple Watch" creationDate="2026-10-27 04:30:00 +0800" startDate="2026-10-27 04:30:00 +0800" endDate="2026-10-27 04:40:00 +0800" value="HKCategoryValueSleepAnalysisAwake"/>
+ <Record type="HKCategoryTypeIdentifierSleepAnalysis" sourceName="Apple Watch" creationDate="2026-10-27 04:40:00 +0800" startDate="2026-10-27 04:40:00 +0800" endDate="2026-10-27 05:00:00 +0800" value="HKCategoryValueSleepAnalysisInBed"/>
+ <Record type="HKCategoryTypeIdentifierSleepAnalysis" sourceName="Apple Watch" creationDate="2026-10-27 23:00:00 +0800" startDate="2026-10-27 23:00:00 +0800" endDate="2026-10-28 01:00:00 +0800" value="HKCategoryValueSleepAnalysisAsleepDeep"/>
+ <Record type="HKCategoryTypeIdentifierSleepAnalysis" sourceName="Apple Watch" creationDate="2026-10-28 01:00:00 +0800" startDate="2026-10-28 01:00:00 +0800" endDate="2026-10-28 02:30:00 +0800" value="HKCategoryValueSleepAnalysisAsleepREM"/>
+ <Record type="HKQuantityTypeIdentifierStepCount" sourceName="iPhone" unit="count" creationDate="2026-10-27 12:00:00 +0800" startDate="2026-10-27 12:00:00 +0800" endDate="2026-10-27 12:00:00 +0800" value="100"/>
+</HealthData>

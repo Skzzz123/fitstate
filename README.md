@@ -209,7 +209,7 @@ Actions → **Build iOS App** → **Run workflow**，`sign_mode` 选 **`portal`*
 
 本机没有 Mac，Swift 代码只能靠云端编译验证 —— 一次往返好几分钟。
 所以校验器除了常规检查（结构、括号配平、类型重名、import 匹配、
-Info.plist 键、YAML），还做了四件别人得等 xcodebuild 才发现的事：
+Info.plist 键、YAML），还做了五件别人得等 xcodebuild 才发现的事：
 
 | 检查项 | 典型报错 |
 |---|---|
@@ -217,6 +217,7 @@ Info.plist 键、YAML），还做了四件别人得等 xcodebuild 才发现的�
 | 10. Swift 保留字当标识符 | `'case' label can only appear inside a 'switch' statement` |
 | 11. **解析器逻辑自测** | 跨零点算成负数、多值取错、无单位归错类 |
 | 12. **Intent 字面量参数** | `cannot convert value of type 'String' to expected argument type 'IntentDialog'` |
+| 13. **健康导出转换器自测** | 导出转 CSV 算错一天，基线就偏 |
 
 第 9、10、12 条都做过**反向验证**（故意写一段坏代码，确认校验器能精准定位到那一行），
 避免「规则本身是坏的」这种更隐蔽的问题。
@@ -287,6 +288,39 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "Scripts\parser-selftest.ps1
 再写成 CSV。App 会把 CSV 喂给**同一套**基线与评分引擎，今日页、趋势页照常出结果
 （小组件仍然需要 App Groups 能力才能拿到数据）。
 
+### 30 天历史一次性补齐（推荐）
+
+快捷指令一天存一天，**攒够 7 天才有基线、30 天基线才稳**。
+但「健康」App 里其实已经有 30 天历史 —— 导出来就行：
+
+1. iPhone：「健康」→ 右上角头像 → **「导出所有健康数据」** → 得到一个 zip
+2. 把 zip 弄到电脑上（微信「文件传输助手」/邮件都行）
+3. 电脑上跑转换器（纯标准库，不用装任何东西）：
+
+   ```bash
+   python Scripts/health-export-to-csv.py export.zip -o fitstate-import.csv
+   ```
+
+4. 把 `fitstate-import.csv` 放进 App 的「文件」目录（同上：iPhone 上「文件」App →
+   我的 iPhone → 状态；或 Windows 上 iTunes 拖进去）
+5. 回 App 下拉刷新 → 基线立刻可用
+
+转换器的口径**和 App 内 HealthKit 直读完全一致**（对齐 `HealthKitService.swift`）：
+
+| 指标 | 规则 |
+|---|---|
+| 睡眠归属 | 前一天 16:00 → 当天 20:00 这个「夜里」算作**醒来的那一天** |
+| 睡眠总时长 | 深睡 + REM + 核心 + 未分期（各自分段时长累加） |
+| 在床 | `InBed` 分段时长累加 |
+| HRV | 优先取夜里窗口的**中位数**，取不到再退回当天所有样本的中位数 |
+| 静息心率 | 当天所有样本的**平均值** |
+
+CSV 和快捷指令的数据**按天去重合并，优先级 快捷指令 > CSV** ——
+所以历史用 CSV、今天用快捷指令，两边不打架（见 `AppState.refresh()`）。
+
+> 转换器有回归测试：`Scripts/validate.ps1` 第 13 条会用样例导出跑一遍，
+> 输出必须逐行一致才通过。
+
 设置页里可以一键复制模板，也可以随时点「重新读取」。
 
 ---
@@ -336,8 +370,9 @@ fitstate/
 ├── Scripts/
 │   ├── apple-portal.rb               # 门户直开能力 + 申请证书与描述文件
 │   ├── sign-ipa.sh                   # 用自有证书 + 描述文件正签
-│   ├── validate.ps1                  # 静态校验（12 项，含 Swift 编译期错误预检）
-│   └── parser-selftest.ps1           # 解析器 + 合并规则 + 文本参数防护逻辑自测（18 条断言，无 Mac 也能跑）
+│   ├── validate.ps1                  # 静态校验（13 项，含 Swift 编译期错误预检）
+│   ├── health-export-to-csv.py       # 「健康」App 导出 → FitState CSV（30 天历史补齐）
+│   └── parser-selftest.ps1           # 解析器 + 合并规则 + 文本参数防护逻辑自测（21 条断言，无 Mac 也能跑）
 ├── Sources/
 │   ├── Shared/                       # 主 App 与小组件共用
 │   │   ├── AppGroup.swift            #   App Group 容器

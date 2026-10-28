@@ -400,6 +400,67 @@ foreach ($f in $swift) {
 }
 Info "Intent 字面量参数检查完毕（命中 $aiHits 处）"
 
+# ---------------------------------------------------------------- 13. 健康导出转换器
+#
+# 这个转换器决定「30 天历史一次性补齐」的基线 ——
+# 它算错一天，整个基线就偏，而且要等用户拿到分数才会发现。
+# 所以用一份样例导出跑一遍，输出必须和预期逐行一致。
+Write-Output "`n=== 13. 健康导出转换器自测 ==="
+$conv = Join-Path $root 'Scripts\health-export-to-csv.py'
+$sample = Join-Path $root 'Scripts\health-export-sample.xml'
+if (-not (Test-Path $conv) -or -not (Test-Path $sample)) {
+  $warnings.Add("找不到 Scripts\health-export-to-csv.py 或样例导出，跳过转换器自测")
+} else {
+  $py = $null
+  # 注意：WindowsApps 里那个 python 是**占位符**（Microsoft Store 的转发器），
+  # 调它不会报错但什么也干不了，所以每个候选都要真跑一次 --version 验一验。
+  $candidates = @(
+    'C:\Users\Milky\AppData\Local\Programs\Python\Python312\python.exe',
+    'python', 'python3', 'py'
+  )
+  foreach ($cand in $candidates) {
+    $exe = $cand
+    if ($cand -like '*\*') {
+      if (-not (Test-Path $cand)) { continue }
+    } else {
+      $found = Get-Command $cand -ErrorAction SilentlyContinue
+      if (-not $found) { continue }
+      $exe = $found.Source
+    }
+    & $exe --version *> $null
+    if ($LASTEXITCODE -eq 0) { $py = $exe; break }
+  }
+  if (-not $py) {
+    $warnings.Add('找不到 Python，跳过健康导出转换器自测')
+  } else {
+    $tmpCsv = Join-Path $env:TEMP 'fitstate-export-selftest.csv'
+    & $py $conv $sample -o $tmpCsv | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+      $errors.Add("健康导出转换器运行失败（$conv）")
+    } else {
+      $actual = @(Get-Content $tmpCsv -Encoding UTF8 | ForEach-Object { $_.Trim() })
+      $expect = @(
+        '日期,HRV(ms),静息心率(bpm),睡眠时长(min),深睡(min),REM(min),在床(min)',
+        '2026-10-26,48.0,56.0,0,0,0,0',
+        '2026-10-27,52.0,56.0,330,60,90,20',
+        '2026-10-28,,,210,120,90,0'
+      )
+      if ($actual.Count -ne $expect.Count) {
+        $errors.Add("健康导出转换器输出 $actual.Count 行，预期 $($expect.Count) 行")
+      } else {
+        for ($i = 0; $i -lt $expect.Count; $i++) {
+          if ($actual[$i] -ne $expect[$i]) {
+            $errors.Add("健康导出转换器第 $($i+1) 行不对：'$($actual[$i])'，预期 '$($expect[$i])'")
+          }
+        }
+      }
+      if ($errors.Count -eq 0 -or -not ($errors -match '健康导出转换器')) {
+        Info "转换器输出与预期一致（$($actual.Count - 1) 天）"
+      }
+    }
+  }
+}
+
 # ---------------------------------------------------------------- 汇总
 Write-Output "`n================ 结果 ================"
 if ($errors.Count -eq 0) {
