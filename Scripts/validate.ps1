@@ -443,7 +443,7 @@ if (-not (Test-Path $conv) -or -not (Test-Path $sample)) {
         '日期,HRV(ms),静息心率(bpm),睡眠时长(min),深睡(min),REM(min),在床(min)',
         '2026-10-26,48.0,56.0,0,0,0,0',
         '2026-10-27,52.0,56.0,330,60,90,20',
-        '2026-10-28,,,210,120,90,0'
+        '2026-10-28,,,210,120,90,210'
       )
       if ($actual.Count -ne $expect.Count) {
         $errors.Add("健康导出转换器输出 $actual.Count 行，预期 $($expect.Count) 行")

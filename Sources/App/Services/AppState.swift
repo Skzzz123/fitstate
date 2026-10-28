@@ -167,17 +167,12 @@ final class AppState: ObservableObject {
             }
 
             // 合并优先级：HealthKit > 快捷指令 > CSV
+            // 但必须**逐字段**合并，不能按天整条去重 ——
+            // 快捷指令那天可能只有 HRV/心率（睡眠通道没时长），
+            // 按整条去重会把 CSV 里同一天的睡眠整条丢掉，
+            // 于是「今天睡眠 0 分钟」，睡眠那 35% 权重直接消失。
             let healthCount = fetched.count
-            var merged = fetched
-            if !manual.isEmpty {
-                let existing = Set(merged.map { $0.dayKey })
-                merged.append(contentsOf: manual.filter { !existing.contains($0.dayKey) })
-            }
-            if !imported.isEmpty {
-                let existing = Set(merged.map { $0.dayKey })
-                merged.append(contentsOf: imported.filter { !existing.contains($0.dayKey) })
-            }
-            merged.sort { $0.dayKey < $1.dayKey }
+            var merged = DataMerger.merge(sources: [fetched, manual, imported])
 
             usingImportedData = healthCount == 0 && manual.isEmpty && !imported.isEmpty
             if healthCount > 0 {
@@ -202,8 +197,8 @@ final class AppState: ObservableObject {
                 return
             }
 
-            // 每一都用「留一法」基线：算某天时，基线里不含这一天。
-            // 今天也不例外，口径全程一致。
+            // 每一天都用「留一法」基线：算某天时，基线只取「那一天之前」的 N 天。
+            // 今天也不例外，口径全程一致（趋势图和今天页用的是同一把尺子）。
             let todaysBaseline = BaselineEngine.build(
                 from: metrics,
                 windowDays: settings.baselineWindowDays,

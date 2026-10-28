@@ -11,7 +11,7 @@
 本脚本的口径**和 App 内 HealthKit 直读完全一致**（对齐 Sources/App/Services/HealthKitService.swift）：
   - 睡眠归属：前一天 16:00 → 当天 20:00 这个「夜里」算作**醒来的那一天**
   - 深睡 / REM / 核心 / 未分期 时长各自累加，睡眠总时长 = 这四项之和
-  - 在床：InBed 样本时长累加
+  - 在床：优先累加 InBed 样本；Apple Watch 不写 InBed 时退回「总睡眠 + 清醒」
   - HRV：优先取夜里窗口的中位数，取不到再退回当天所有样本的中位数
   - 静息心率：当天所有样本的平均值
 
@@ -65,36 +65,49 @@ def parse_dt(text):
     return None
 
 
-def resolve_xml(path):
-    """输入可以是 export.xml，也可以是 export.zip（自动解开）"""
+def open_export(path):
+    """返回一个可读的文件对象。
+
+    「健康」的导出 zip 里有两部分：
+      - apple_health_export/导出.xml  ← 主数据（中文文件名，可能有 1 GB）
+      - apple_health_export/export_cda.xml ← 临床记录，不是我们要的
+    所以这里按「最大的非 CDA 的 xml」来挑，并且**直接流式读**，
+    不把 1 GB 解压到磁盘上。
+    """
     if path.lower().endswith(".zip"):
-        out_dir = path + "_unzipped"
-        os.makedirs(out_dir, exist_ok=True)
-        with zipfile.ZipFile(path) as zf:
-            zf.extractall(out_dir)
-        for name in ("export.xml",):
-            candidate = os.path.join(out_dir, name)
-            if os.path.exists(candidate):
-                return candidate
-        for root, _dirs, files in os.walk(out_dir):
-            for f in files:
-                if f.lower() == "export.xml":
-                    return os.path.join(root, f)
-        raise SystemExit("压缩包里没找到 export.xml")
-    return path
+        zf = zipfile.ZipFile(path)
+        best = None
+        for info in zf.infolist():
+            name = info.filename.lower()
+            if not name.endswith(".xml"):
+                continue
+            if name.endswith("export_cda.xml"):
+                continue
+            if "electrocardiograms" in name:
+                continue
+            if best is None or info.file_size > best.file_size:
+                best = info
+        if best is None:
+            raise SystemExit("压缩包里没找到健康数据主 XML")
+        return zf, zf.open(best), best.filename
+    return None, open(path, "rb"), path
 
 
-def collect(xml_path):
+def collect(fileobj):
     """流式解析，只留我们关心的三类记录"""
     hrv = []        # (start, end, value_ms)
     rhr = []        # (start, end, value)
     sleep = []      # (start, end, stage)
     offsets = set()
+    seen = 0
 
-    context = ET.iterparse(xml_path, events=("end",))
+    context = ET.iterparse(fileobj, events=("end",))
     for _event, elem in context:
         if elem.tag != "Record":
             continue
+        seen += 1
+        if seen % 500000 == 0:
+            print("  ...已扫 %d 条记录（HRV %d / 心率 %d / 睡眠 %d）" % (seen, len(hrv), len(rhr), len(sleep)))
         rtype = elem.get("type")
         if rtype in (HRV_TYPE, RHR_TYPE, SLEEP_TYPE):
             start = parse_dt(elem.get("startDate"))
@@ -147,14 +160,28 @@ def mean(values):
 
 
 def main():
+    # Windows 控制台默认 GBK，打印中文路径会抛 UnicodeEncodeError —— 换成 UTF-8
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
     ap = argparse.ArgumentParser()
     ap.add_argument("input", help="export.xml 或 export.zip")
     ap.add_argument("-o", "--output", default="fitstate-import.csv")
     ap.add_argument("--days", type=int, default=0, help="只保留最近 N 天（0 = 全部）")
     args = ap.parse_args()
 
-    xml_path = resolve_xml(args.input)
-    hrv, rhr, sleep, offsets = collect(xml_path)
+    zf, fileobj, xml_name = open_export(args.input)
+    print("读取 %s（%s）" % (xml_name, args.input))
+    hrv, rhr, sleep, offsets = collect(fileobj)
+    try:
+        fileobj.close()
+    except Exception:
+        pass
+    if zf is not None:
+        zf.close()
 
     if not hrv and not rhr and not sleep:
         raise SystemExit("没读到 HRV / 静息心率 / 睡眠记录，检查一下是不是「健康」的导出文件")
@@ -172,6 +199,11 @@ def main():
         days.add((start + timedelta(days=1)).date())
 
     days = sorted(days)
+    # 不要「明天」的数据：睡眠的夜间窗口延伸到当天 20:00，
+    # 傍晚的样本会被算到「明天」名下（和 App 内 HealthKit 直读口径一致），
+    # 但 App 的「今日页」取的是最后一天，带上明天就会把明天当成今天。
+    today = datetime.now(tz).date()
+    days = [d for d in days if d <= today]
     if args.days > 0:
         days = days[-args.days:]
 
@@ -204,6 +236,13 @@ def main():
                 awake += dur
         total_sleep = deep + rem + core + unspec
 
+        # 在床时长：优先用 InBed 样本。
+        # Apple Watch 一般**不写** InBed，只写 Awake；只写 InBed 的话这一列全是 0，
+        # App 就算不出睡眠效率（分母为 0），效率项会恒定落在兜底值上。
+        # 「总睡眠 + 清醒」才是真实的在床时长，也和 App 内 HealthKit 直读口径一致
+        # （那边没有 InBed 时，分母同样取 总睡眠 + 清醒）。
+        in_bed_seconds = inbed if inbed > 0 else (total_sleep + awake)
+
         # HRV：先夜里窗口的中位数，取不到退回当天
         night_hrv = [v for s, _e, v in hrv if night_start <= s < night_end]
         day_hrv = [v for s, _e, v in hrv if midnight <= s < next_midnight]
@@ -225,7 +264,7 @@ def main():
             "%.0f" % (total_sleep / 60.0),
             "%.0f" % (deep / 60.0),
             "%.0f" % (rem / 60.0),
-            "%.0f" % (inbed / 60.0),
+            "%.0f" % (in_bed_seconds / 60.0),
         ])
 
     with open(args.output, "w", newline="", encoding="utf-8") as fh:

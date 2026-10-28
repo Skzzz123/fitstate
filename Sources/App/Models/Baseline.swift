@@ -34,14 +34,28 @@ struct Baseline: Equatable {
 /// 基线计算引擎：滚动窗口 + 中位数 + 分位带。
 enum BaselineEngine {
     /// 计算基线时排除当天，避免今天的数值反向污染自己的参照系。
+    ///
+    /// 窗口口径：**只取「被评估那一天之前」的 N 天**。
+    /// - 算今天 → 基线 = 之前 N 天（不含今天）；
+    /// - 算历史某一天 → 基线 = 那一天之前的 N 天，**绝不把后来的数据算进过去**。
+    ///
+    /// 早先这里取的是「除当天外所有天的最后 N 天」，
+    /// 于是历史点的基线里混进了未来数据 —— 趋势图会失真，
+    /// 而且同一条曲线里今天和历史点用的不是同一把尺子。
     static func build(from metrics: [DailyMetrics], windowDays: Int, excluding dayKey: String?) -> Baseline {
         let calendar = Calendar.current
-        let today = calendar.startOfDay(for: Date())
+        let todayKey = Fmt.dayKey(calendar.startOfDay(for: Date()))
 
+        // 用 dayKey（"2026-10-27" 这种）做字典序比较 = 时间序，
+        // 比 Date 比较更稳（不受各条记录时分秒差异影响）。
         let candidates = metrics
             .filter { $0.dayKey != dayKey }
-            .filter { $0.date <= today }
-            .sorted { $0.date < $1.date }
+            .filter { $0.dayKey <= todayKey }
+            .filter { day in
+                guard let anchor = dayKey else { return true }
+                return day.dayKey < anchor
+            }
+            .sorted { $0.dayKey < $1.dayKey }
             .suffix(windowDays)
 
         var baseline = Baseline()
