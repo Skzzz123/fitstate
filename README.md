@@ -21,27 +21,67 @@
 | App 装进 iPhone、能打开 | ✅ 已验证 |
 | 图标 | ✅ 换成你给的像素图（1024×1024，无透明通道） |
 | 自签流水线（解描述文件 → 提 entitlements → codesign → 校验） | ✅ CI 用假证书完整跑通，签名里 healthkit + app groups 都在 |
-| HealthKit 权限 | ⏳ **只差一个 App 专用密码**，见第二节 |
+| **数据入口（0 元路线）** | ✅ **App Intent +「快捷指令」已实现**，不需要任何 Apple 能力 |
+| HealthKit 直接读取 | ❌ **免费账号拿不到**，门户被官方硬锁（见下） |
+| 主屏小组件 | ⚠️ 需要 App Group，免费账号暂时拿不到（$99 路线有） |
 
-HealthKit 这项能力必须由 **Apple 在门户里给 App ID 授权**，任何第三方签名工具都做不到。
+### 免费账号为什么拿不到 HealthKit（实测结论）
+
+2026-10-28 用真实登录态在浏览器里实测了开发者门户：
+
+```
+developer.apple.com/account/resources/identifiers/list
+→ "Access Unavailable
+   This resource is only for developers enrolled in a developer program
+   or members of an organization's team in a developer program."
+```
+
+这是 Apple 对**免费 Apple Account** 的硬限制，不是我们脚本的问题。
+配套证据也齐：
+
+- 侧载包（免费账号签出来的）描述文件里 **既没有 `com.apple.developer.healthkit`，
+  也没有 `com.apple.security.application-groups`** —— 能力压根没进包
+- 缺 HealthKit entitlement 的包一碰 `HKHealthStore` 就会被系统杀掉，
+  所以 App 现在会先读自己的描述文件判断能力，没有就**完全不碰 HealthKit**
+  （`Sources/App/Services/HealthKitAvailability.swift`）
+
 Apple 官方能力矩阵
 （<https://developer.apple.com/help/account/reference/supported-capabilities-ios/>）
-上 HealthKit 与 App Groups 在「Apple Developer（免费）」那一列**也是 ✅**，
-表注里唯一的限制只有 MapKit 导航和地理文件上传——也就是说**免费档是支持的**，
-只是「谁来点这个开关」没有现成工具。
+上 HealthKit 与 App Groups 在「Apple Developer（免费）」那一列确实也是 ✅，
+但表头那句话才是关键：**"The capabilities available to an iOS provisioning
+profile depend on your program membership."** —— 免费账号拿不到描述文件，
+自然也拿不到能力。
 
-已排除的路径（都实测过）：
+### 那 0 元怎么用？—— 快捷指令 + App Intent
 
-- 把 entitlement 写进 ipa 签名 + 自造 `embedded.mobileprovision` → ❌ 装上仍报缺失
-- 免费账号在门户里手工勾能力（网页 UI 与 `identifiers/list` 等列表接口）→ ❌ 返回 *Access Unavailable — only for developers enrolled in a developer program*
-  （所以脚本**完全不依赖任何列表接口**：写操作直接打 `services-account` 的原始 action，
-  读不到就退化成「直接建、失败再换候选名」）
-- Sideloadly 免费版 → ❌ 二进制里根本没有 capability 名，只解析描述文件的 4 个键；能力清单来自 Patreon 认证的 `/caps` 接口
-- 只订阅 Patreon → ❌ 官方更新说明写明要 **Patreon + $99 会员**双条件
+**App Intent 不需要任何能力**（不需要 HealthKit、不需要 App Groups、不需要推送），
+而 iOS 自带的「快捷指令」能读「健康」App。于是：
 
-**结论与解法**：能力是挂在 **App ID** 上的。我们直接调 Apple 门户的接口
-（fastlane/spaceship 开源实现里的真实端点），给免费个人团队的 App ID 开启
-HealthKit 与 App Groups，再自己申请证书和描述文件、自己签名 —— **全程 0 元**。
+```
+「快捷指令」动作「查找健康记录」  →  App Intent「记录今日健康数据」  →  本地 JSON
+                                                                        ↓
+                                                            基线 + 评分引擎（同一套）
+                                                                        ↓
+                                                        分数 / 建议 / 趋势 / 导出
+```
+
+- 快捷指令还能配**个人自动化**（每天早上 7:00 自动跑），等于自动更新
+- App Intent 在后台执行，不拉起 App，不联网，没有账号
+- 数据只写在这台 iPhone 的沙盒里
+
+实现见 `Sources/App/Services/HealthIntents.swift` 与
+`Sources/App/Services/ManualHealthStore.swift`，操作步骤见第十二节。
+
+### 小组件：为什么它需要 App Group
+
+主 App 和小组件是两个进程，沙盒互相看不见，**唯一官方的共享通道就是 App Group**
+（`UserDefaults(suiteName:)` 也一样）。免费账号拿不到 App Group，
+所以免费路线下小组件暂时显示不了真实分数——这是 Apple 的限制，
+不是代码能绕过去的。想让小组件也工作，只剩两条路：
+
+1. 付 $99 加入 Apple Developer Program（`sign_mode=apple`，证书 1 年，HealthKit + App Groups 全有）
+2. 拿到能用的 App 专用密码后走 `sign_mode=portal`，脚本会在免费团队上试开
+   App Group（能否开成功取决于 Apple 后端对免费团队的策略，本仓库尚未实测成功）
 
 ---
 
@@ -280,3 +320,51 @@ fitstate/
 
 基线：滚动 30 天窗口 + **中位数**（抗离群值）+ 25–75 分位带；至少 7 天有效数据才给结论。
 每一天都用「留一法」基线（算这天时基线不含这天），口径全程一致。
+
+---
+
+## 十二、快捷指令操作步骤（0 元路线）
+
+App 里有两个可用的 App Intent：
+
+| 动作名 | 参数 | 适合 |
+|---|---|---|
+| **记录今日健康数据** | HRV(ms)、静息心率(bpm)、睡眠时长(分钟)、深睡(分钟)、REM(分钟)、在床(分钟)、日期(可空) | 参数一个个填 |
+| **用一行文本记录健康数据** | 一行文本：`HRV,静息心率,睡眠时长,深睡,REM,在床[,日期]` | 想串成一条自动化 |
+
+### 手工跑一次（先验证通不通）
+
+1. 打开「快捷指令」→ 右上「+」→ 搜索「查找健康记录」
+2. 选 **心率变异性 (SDNN)**，类型选「心率变异性（SDNN）」，范围「昨天」→ 运行一下，
+   看返回的数值是不是毫秒（一般在 20–120 之间）
+3. 再加一个「查找健康记录」→ 选 **静息心率**，范围「昨天」
+4. 再加一个「查找健康记录」→ 选 **睡眠分析**，范围「昨天」
+   → 睡眠分析返回的是**分段**（深睡/REM/核心/清醒/在床），需要在快捷指令里用
+   「筛选」按类型分开，再「数学运算」换算成分钟
+5. 加一个 **运行 App** 动作 → 搜 FitState → 选「记录今日健康数据」
+   → 把上面几个值依次填进对应参数
+6. 运行。快捷指令会回一句「已记录 2026-10-28，今日状态分 78（良好）」
+7. 回到 FitState App，下拉刷新就能看到分数
+
+> 嫌步骤多就用「用一行文本记录健康数据」：
+> 前面的查找动作各自取到值后用「组合文本」拼成 `48,54,452,86,121,500`，
+> 再喂给这个 App Intent，一个参数搞定。
+
+### 每天自动跑
+
+「快捷指令」右上角 → **自动化** → 「新建自动化」→ 时间 **每天早上 7:00**
+→ 依次选上面那些动作 → 打开「运行前询问」关掉。
+
+这样每天早上 Apple Watch 的数据同步进「健康」之后，分数会自动更新。
+
+### 数据存在哪
+
+`Application Support/FitState/fitstate-manual.json`，只在这台 iPhone 上，
+可在「设置 → 数据 → 生成 CSV」导出。卸载 App 会一起删掉。
+
+### 快捷指令给不了的东西
+
+- **训练记录**（走 HealthKit 的 workoutType，免费账号拿不到）—— 趋势里的训练标记会缺
+- **小组件**（需要 App Group，免费账号拿不到）—— 小组件会显示「等待数据」
+- **自动的 30 天基线**：基线是拿已有的历史数据算的，快捷指令喂了几天就有几天，
+  满 7 天才开始出结论，满 30 天基线才稳
