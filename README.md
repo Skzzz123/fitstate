@@ -22,6 +22,8 @@
 | 图标 | ✅ 换成你给的像素图（1024×1024，无透明通道） |
 | 自签流水线（解描述文件 → 提 entitlements → codesign → 校验） | ✅ CI 用假证书完整跑通，签名里 healthkit + app groups 都在 |
 | **数据入口（0 元路线）** | ✅ **App Intent +「快捷指令」已实现**，不需要任何 Apple 能力 |
+| 快捷指令输出解析 | ✅ 多格式容错（JSON / 纯文本 / 中英文），分通道归类，跨零点时长正确 |
+| 输出格式自助排查 | ✅ App 内「粘贴自检」：粘进去立刻看到解析结果 + 没认出来的原文 |
 | HealthKit 直接读取 | ❌ **免费账号拿不到**，门户被官方硬锁（见下） |
 | 主屏小组件 | ⚠️ 需要 App Group，免费账号暂时拿不到（$99 路线有） |
 
@@ -58,18 +60,32 @@ profile depend on your program membership."** —— 免费账号拿不到描述
 而 iOS 自带的「快捷指令」能读「健康」App。于是：
 
 ```
-「快捷指令」动作「查找健康记录」  →  App Intent「记录今日健康数据」  →  本地 JSON
-                                                                        ↓
-                                                            基线 + 评分引擎（同一套）
-                                                                        ↓
-                                                        分数 / 建议 / 趋势 / 导出
+「快捷指令」动作「查找健康记录」×3（HRV / 静息心率 / 睡眠分析）
+        ↓
+App Intent「记录今日健康数据」  →  本地 JSON
+                                    ↓
+                        基线 + 评分引擎（同一套）
+                                    ↓
+                            分数 / 建议 / 趋势 / 导出
 ```
 
 - 快捷指令还能配**个人自动化**（每天早上 7:00 自动跑），等于自动更新
 - App Intent 在后台执行，不拉起 App，不联网，没有账号
 - 数据只写在这台 iPhone 的沙盒里
 
-实现见 `Sources/App/Services/HealthIntents.swift` 与
+**三个「原始数据」参数是分通道的** —— HRV 那一路只会被当成 HRV，
+静息心率那一路只会被当成静息心率。所以即使输出里一个单位名都没有，
+App 也能正确归类；HRV 取**中位数**、静息心率取**平均**，
+跟 HealthKit 直读的口径完全一致。
+
+「查找健康记录」的输出格式没有公开文档，所以还做了两件事：
+- **多格式容错解析器**（`HealthTextParser.swift`）：JSON 数组 / 纯文本 /
+  中文英文都认，跨零点的睡眠时段（23:30 → 06:45）也算得对
+- **粘贴自检台**（App 内「设置 → 快捷指令喂数据 → 打开粘贴自检」）：
+  把输出粘进去，立刻看到解析结果和**没认出来的原文**，不用靠猜
+
+实现见 `Sources/App/Services/HealthIntents.swift`、
+`Sources/App/Services/HealthTextParser.swift` 与
 `Sources/App/Services/ManualHealthStore.swift`，操作步骤见第十二节。
 
 ### 小组件：为什么它需要 App Group

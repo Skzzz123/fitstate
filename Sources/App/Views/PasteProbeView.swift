@@ -19,6 +19,7 @@ struct PasteProbeView: View {
     @State private var raw: String = ""
     @State private var channel: ProbeChannel = .sleep
     @State private var result: ProbeResult?
+    @State private var selfTest: ParserSelfTest.Report?
 
     enum ProbeChannel: String, CaseIterable, Identifiable {
         case sleep = "睡眠分析"
@@ -147,8 +148,61 @@ struct PasteProbeView: View {
                 .buttonStyle(.plain)
                 .disabled(raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
+
+            Button {
+                selfTest = ParserSelfTest.run()
+            } label: {
+                Text(selfTest == nil ? "跑一遍解析器自检" : "再跑一次自检")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(Theme.primary)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 9)
+                    .background(Theme.primary.opacity(0.10))
+                    .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
+            }
+            .buttonStyle(.plain)
+
+            if let selfTest {
+                selfTestCard(selfTest)
+            }
         }
         .cardStyle()
+    }
+
+    /// 解析器自检结果。
+    ///
+    /// 这些用例覆盖的是「最容易悄悄算错」的地方：
+    /// 跨零点的睡眠时段、多个样本取中位数、没有单位时靠通道归类。
+    private func selfTestCard(_ report: ParserSelfTest.Report) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text(report.allPassed ? "自检全部通过" : "自检有失败项")
+                    .font(.system(size: 13.5, weight: .semibold))
+                    .foregroundStyle(report.allPassed ? Theme.primary : Theme.rose)
+                Spacer()
+                Text("\(report.passedCount)/\(report.cases.count)")
+                    .font(.system(size: 12.5, design: .monospaced))
+                    .foregroundStyle(Theme.muted)
+            }
+
+            ForEach(report.cases, id: \.name) { case in
+                HStack(alignment: .top, spacing: 7) {
+                    Text(case.passed ? "✓" : "✗")
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundStyle(case.passed ? Theme.primary : Theme.rose)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(case.name)
+                            .font(.system(size: 12.5))
+                            .foregroundStyle(Theme.body)
+                        Text(case.detail)
+                            .font(.system(size: 11.5, design: .monospaced))
+                            .foregroundStyle(Theme.muted)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
+        }
+        .padding(.top, 4)
     }
 
     // MARK: - 结果
