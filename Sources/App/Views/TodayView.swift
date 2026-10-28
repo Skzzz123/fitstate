@@ -3,6 +3,7 @@ import SwiftUI
 struct TodayView: View {
     @EnvironmentObject private var app: AppState
     @State private var showDetail = false
+    @State private var showManualEntry = false
 
     var body: some View {
         ScrollView {
@@ -36,6 +37,10 @@ struct TodayView: View {
         .refreshable {
             await app.refresh()
         }
+        .sheet(isPresented: $showManualEntry) {
+            ManualEntryView()
+                .environmentObject(app)
+        }
     }
 
     // MARK: - 头部
@@ -51,6 +56,20 @@ struct TodayView: View {
                     .foregroundStyle(Theme.ink)
             }
             Spacer()
+            Button {
+                showManualEntry = true
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "square.and.pencil").font(.system(size: 10.5))
+                    Text("补录").font(.system(size: 11.5, weight: .medium))
+                }
+                .foregroundStyle(Theme.primary)
+                .padding(.horizontal, 9)
+                .padding(.vertical, 4)
+                .background(Theme.primary.opacity(0.10))
+                .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+            }
+            .buttonStyle(.plain)
             Text(app.baseline.progressText)
                 .font(.system(size: 11, design: .monospaced))
                 .foregroundStyle(Theme.muted)
@@ -117,6 +136,19 @@ struct TodayView: View {
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 11)
                     .background(Theme.primary)
+                    .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
+            }
+            .buttonStyle(.plain)
+
+            Button {
+                showManualEntry = true
+            } label: {
+                Text("手动补录今天的数字")
+                    .font(.system(size: 13.5, weight: .semibold))
+                    .foregroundStyle(Theme.primary)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 10)
+                    .background(Theme.primary.opacity(0.10))
                     .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
             }
             .buttonStyle(.plain)
