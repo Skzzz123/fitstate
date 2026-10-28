@@ -182,7 +182,7 @@ Info "检查了 $checkedRefs 处 Type.member 引用"
 Write-Output "`n=== 5. 未声明的大写标识符 ==="
 $system = @(
  'SwiftUI','Foundation','HealthKit','WidgetKit','AppIntents','Charts','UIKit','Combine','Darwin','Dispatch','MainActor','ObservableObject','EnvironmentObject','Published','State','StateObject','Binding','View','Text','Image','Button','VStack','HStack','ZStack','Spacer','ScrollView','ForEach','LazyVStack','LazyHStack','Section','Group','Divider','ProgressView','Slider','Picker','Toggle','TextField','SecureField','List','NavigationStack','NavigationLink','NavigationSplitView','TabView','Alert','Sheet','Color','Font','Angle','Edge','Alignment','Namespace','GeometryReader','Canvas','TimelineView','Gauge','Label','LabeledContent','Menu','ShareLink','Date','DateFormatter','Calendar','TimeZone','Locale','UUID','URL','Data','String','Int','Double','Bool','Array','Dictionary','Set','Optional','Result','Task','Actor','MainActor','Any','AnyObject','Void','Error','Equatable','Codable','Hashable','Identifiable','Comparable','Sendable','TimeInterval','DispatchQueue','Locale','ObjectIdentifier','Mirror','Regex','Duration','Clock','ContinuousClock','IndexPath','Range','ClosedRange','StrideThrough','Sequence','Collection','RandomAccessCollection','Formatter','NumberFormatter','Measurement','Unit','URLSession','FileManager','Bundle','UserDefaults','NotificationCenter','JSONEncoder','JSONDecoder','DateFormatter','IndexSet','FileHandle','Process','Timer','RunLoop','Locale','CFBundle','HKHealthStore','HKObjectType','HKQuantityType','HKCategoryType','HKCategoryValueSleepAnalysis','HKQuantitySample','HKCategorySample','HKSample','HKWorkout','HKQuery','HKSampleQueryDescriptor','HKQuantityQueryDescriptor','HKStatisticsCollectionQuery','HKUnit','SortDescriptor','HKAuthorizationRequestStatus','BGTaskScheduler','BGAppRefreshTask','BGAppRefreshTaskRequest','WidgetCenter','TimelineProvider','Timeline','TimelineEntry','WidgetBundle','WidgetConfiguration','StaticConfiguration','AppIntent','IntentResult','LocalizedStringResource','LocalizedStringResource','View','XCTAssert','Notification','Shape','StrokeStyle','Font','Mark','Chart','ChartBuilder','AxisMarks','AxisValueLabel','AxisGridLine','DateComponents','Calendar','Stat','NSNumber','NSPredicate','AnyCancellable','Set','URLSession','TabView','Scene','App','WindowGroup','AnyView','PreviewProvider','Binding','StringProtocol','Substring','StaticString','Mirror','Unicode','UnicodeScalar','Unicode','ClosedRange','FloatingPoint','Numeric','Strideable','ExpressibleByIntegerLiteral','ExpressibleByFloatLiteral','ExpressibleByStringLiteral','CaseIterable','RawRepresentable','TextOutputStream','Encodable','Decodable','CodingKey','Decoder','Encoder','CustomStringConvertible','LosslessStringConvertible','Comparable','Equatable','AnyHashable','Hasher','CodingUserInfoKey','Scanner','Index','String','Character','Substring','Array','Set','Dictionary','Optional','Never','Void','AnyObject','Any','Self','Type','Metatype','Unmanaged','UnsafePointer','UnsafeMutablePointer','MemoryLayout','Stride','UnsafeMutableBufferPointer','UnsafeBufferPointer','Manifold'
-'BackgroundTasks','LocalizedError','ViewModifier','Content','ViewBuilder','RoundedRectangle','LineMark','PointMark','AreaMark','BarMark','AxisMarks','AxisValueLabel','AxisGridLine','Chart','ChartBuilder','Context','Shape','StrokeStyle','Mark','Font','Text','Scene','App','WindowGroup','AnyView','SceneStorage','AppStorage','Environment','EnvironmentValues','WidgetFamily','WidgetConfiguration','WidgetCenter','TimelineProvider','Timeline','TimelineEntry','WidgetBundle','StaticConfiguration','AppIntent','IntentResult','LocalizedStringResource','BGTaskScheduler','BGAppRefreshTask','BGAppRefreshTaskRequest','TabView','Picker','ShareLink','Label','Menu','Gauge','Canvas','Divider','Section','Group','Spacer','ProgressView','Slider','Toggle','TextField','SecureField','List','NavigationStack','NavigationLink','GeometryReader','ForEach','LazyVStack','LazyHStack','ZStack','VStack','HStack','Button','Image','Text','Color','Font','Edge','Angle','Alignment','Namespace','View','State','Binding','StateObject','EnvironmentObject','ObservableObject','Published','Task','Actor','MainActor','Int','Double','Bool','String','Date','Data','URL','UUID','Array','Dictionary','Set','Optional','Result','Error','Void','Any','AnyObject','Equatable','Hashable','Codable','Identifiable','Comparable','Sendable','TimeInterval','Calendar','TimeZone','Locale','Bundle','FileManager','UserDefaults','JSONEncoder','JSONDecoder','NotificationCenter','DispatchQueue','Timer','Process','HKHealthStore','HKObjectType','HKQuantityType','HKCategoryType','HKCategoryValueSleepAnalysis','HKQuantitySample','HKCategorySample','HKSample','HKWorkout','HKQuery','HKSampleQueryDescriptor','HKQuantityQueryDescriptor','HKUnit','SortDescriptor','HKAuthorizationRequestStatus','UIApplication','UIImage','UIColor','CFBundle','NSError','NSPredicate','Notification','TextEditor','ToolbarItem','ToolbarItemPlacement','CharacterSet','ISO8601DateFormatter','NSRegularExpression','NSRange','NSNotFound','DateComponents','CaseIterable','Identifiable'
+'BackgroundTasks','LocalizedError','ViewModifier','Content','ViewBuilder','RoundedRectangle','LineMark','PointMark','AreaMark','BarMark','AxisMarks','AxisValueLabel','AxisGridLine','Chart','ChartBuilder','Context','Shape','StrokeStyle','Mark','Font','Text','Scene','App','WindowGroup','AnyView','SceneStorage','AppStorage','Environment','EnvironmentValues','WidgetFamily','WidgetConfiguration','WidgetCenter','TimelineProvider','Timeline','TimelineEntry','WidgetBundle','StaticConfiguration','AppIntent','IntentResult','LocalizedStringResource','BGTaskScheduler','BGAppRefreshTask','BGAppRefreshTaskRequest','TabView','Picker','ShareLink','Label','Menu','Gauge','Canvas','Divider','Section','Group','Spacer','ProgressView','Slider','Toggle','TextField','SecureField','List','NavigationStack','NavigationLink','GeometryReader','ForEach','LazyVStack','LazyHStack','ZStack','VStack','HStack','Button','Image','Text','Color','Font','Edge','Angle','Alignment','Namespace','View','State','Binding','StateObject','EnvironmentObject','ObservableObject','Published','Task','Actor','MainActor','Int','Double','Bool','String','Date','Data','URL','UUID','Array','Dictionary','Set','Optional','Result','Error','Void','Any','AnyObject','Equatable','Hashable','Codable','Identifiable','Comparable','Sendable','TimeInterval','Calendar','TimeZone','Locale','Bundle','FileManager','UserDefaults','JSONEncoder','JSONDecoder','NotificationCenter','DispatchQueue','Timer','Process','HKHealthStore','HKObjectType','HKQuantityType','HKCategoryType','HKCategoryValueSleepAnalysis','HKQuantitySample','HKCategorySample','HKSample','HKWorkout','HKQuery','HKSampleQueryDescriptor','HKQuantityQueryDescriptor','HKUnit','SortDescriptor','HKAuthorizationRequestStatus','UIApplication','UIImage','UIColor','CFBundle','NSError','NSPredicate','Notification','TextEditor','ToolbarItem','ToolbarItemPlacement','CharacterSet','ISO8601DateFormatter','NSRegularExpression','NSRange','NSNotFound','DateComponents','CaseIterable','Identifiable','PASS','FAIL','Value'
 ) | Sort-Object -Unique
 
 $used = New-Object System.Collections.Generic.HashSet[string]
@@ -307,6 +307,48 @@ foreach ($f in $viewFiles) {
   }
 }
 Info "ViewBuilder 检查完毕"
+
+# ---------------------------------------------------------------- 10. Swift 保留字当标识符
+#
+# Swift 的保留字（case / default / in / for / where …）不能当变量名。
+# 写成闭包参数 `{ case in ... }` 会在编译期报
+# "'case' label can only appear inside a 'switch' statement"。
+# 这类错误只能靠 xcodebuild 暴露，每轮 CI 好几分钟，所以提前扫。
+Write-Output "`n=== 10. Swift 保留字检查 ==="
+$swiftKeywords = @(
+  'case','default','in','for','where','repeat','return','throw','try','catch',
+  'defer','guard','else','do','if','while','switch','break','continue','fallthrough',
+  'as','is','nil','true','false','self','Self','super','import','class','struct',
+  'enum','protocol','extension','func','var','let','init','deinit','subscript',
+  'typealias','operator','static','public','private','internal','fileprivate',
+  'open','final','lazy','weak','unowned','mutating','nonmutating','override',
+  'convenience','required','indirect','lazy','some','any','actor','await','async'
+)
+$kwHits = 0
+foreach ($f in $swift) {
+  $lines = Get-Content $f.FullName -Encoding UTF8
+  for ($i = 0; $i -lt $lines.Count; $i++) {
+    $code = [regex]::Replace($lines[$i], '(?m)//.*$', '')
+    $code = [regex]::Replace($code, '(?s)"(?:\\.|[^"\\])*"', '""')
+    # 闭包参数：{ case in / { item in
+    foreach ($m in [regex]::Matches($code, '\{\s*([A-Za-z_]\w*)\s+in\b')) {
+      $name = $m.Groups[1].Value
+      if ($swiftKeywords -contains $name) {
+        $errors.Add("Swift 保留字 '$name' 被当作标识符（$($f.Name) 第 $($i+1) 行）")
+        $kwHits++
+      }
+    }
+    # 变量声明：let case = / var case =
+    foreach ($m in [regex]::Matches($code, '\b(?:let|var)\s+([A-Za-z_]\w*)\s*[=:]')) {
+      $name = $m.Groups[1].Value
+      if ($swiftKeywords -contains $name) {
+        $errors.Add("Swift 保留字 '$name' 被当作变量名（$($f.Name) 第 $($i+1) 行）")
+        $kwHits++
+      }
+    }
+  }
+}
+Info "保留字检查完毕（命中 $kwHits 处）"
 
 # ---------------------------------------------------------------- 汇总
 Write-Output "`n================ 结果 ================"

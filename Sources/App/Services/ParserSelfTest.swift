@@ -253,8 +253,8 @@ enum ParserSelfTest {
 
     /// 一行汇总，给日志用。
     static func summary(_ report: Report) -> String {
-        let lines = report.cases.map { case in
-            "\(case.passed ? "PASS" : "FAIL") | \(case.name) | \(case.detail)"
+        let lines = report.cases.map { item in
+            "\(item.passed ? "PASS" : "FAIL") | \(item.name) | \(item.detail)"
         }
         return (["TOTAL | \(report.passedCount)/\(report.cases.count) 通过"] + lines).joined(separator: "\n")
     }

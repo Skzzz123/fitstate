@@ -185,16 +185,16 @@ struct PasteProbeView: View {
                     .foregroundStyle(Theme.muted)
             }
 
-            ForEach(report.cases, id: \.name) { case in
+            ForEach(report.cases, id: \.name) { item in
                 HStack(alignment: .top, spacing: 7) {
-                    Text(case.passed ? "✓" : "✗")
+                    Text(item.passed ? "✓" : "✗")
                         .font(.system(size: 12, weight: .bold))
-                        .foregroundStyle(case.passed ? Theme.primary : Theme.rose)
+                        .foregroundStyle(item.passed ? Theme.primary : Theme.rose)
                     VStack(alignment: .leading, spacing: 1) {
-                        Text(case.name)
+                        Text(item.name)
                             .font(.system(size: 12.5))
                             .foregroundStyle(Theme.body)
-                        Text(case.detail)
+                        Text(item.detail)
                             .font(.system(size: 11.5, design: .monospaced))
                             .foregroundStyle(Theme.muted)
                             .fixedSize(horizontal: false, vertical: true)
