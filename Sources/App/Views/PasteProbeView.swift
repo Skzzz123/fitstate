@@ -181,10 +181,18 @@ struct PasteProbeView: View {
 
             if !result.sleep.isEmpty {
                 var detailParts: [String] = ["读到 \(result.sleep.sampleCount) 段"]
-                if result.sleep.deepSleep > 0 { detailParts.append("深睡 \(Int((result.sleep.deepSleep / 60).rounded())) 分") }
-                if result.sleep.remSleep > 0 { detailParts.append("REM \(Int((result.sleep.remSleep / 60).rounded())) 分") }
-                if result.sleep.coreSleep > 0 { detailParts.append("核心 \(Int((result.sleep.coreSleep / 60).rounded())) 分") }
-                if result.sleep.inBed > 0 { detailParts.append("在床 \(Int((result.sleep.inBed / 60).rounded())) 分") }
+                if result.sleep.deepSleep > 0 {
+                    detailParts.append("深睡 \(Int((result.sleep.deepSleep / 60).rounded())) 分")
+                }
+                if result.sleep.remSleep > 0 {
+                    detailParts.append("REM \(Int((result.sleep.remSleep / 60).rounded())) 分")
+                }
+                if result.sleep.coreSleep > 0 {
+                    detailParts.append("核心 \(Int((result.sleep.coreSleep / 60).rounded())) 分")
+                }
+                if result.sleep.inBed > 0 {
+                    detailParts.append("在床 \(Int((result.sleep.inBed / 60).rounded())) 分")
+                }
 
                 metricRow(
                     label: "睡眠总时长",

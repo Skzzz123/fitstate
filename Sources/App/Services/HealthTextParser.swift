@@ -382,10 +382,10 @@ enum HealthTextParser {
             sample.kind = .sleep(hit.stage)
 
             let moments = extractMoments(piece)
-            if moments.count >= 2 {
-                sample.start = moments[0].date
-                sample.end = moments[1].date
-                sample.duration = durationBetween(moments[0], moments[1])
+            if moments.moments.count >= 2 {
+                sample.start = moments.moments[0].date
+                sample.end = moments.moments[1].date
+                sample.duration = durationBetween(moments.moments[0], moments.moments[1])
             } else {
                 sample.duration = durationFromText(moments.cleaned)
             }
@@ -401,12 +401,12 @@ enum HealthTextParser {
     /// 至少总时长不会丢（分期按「未分期」记，评分时分期分走中性 50）。
     private static func pairedTimeSegments(in text: String) -> [ParsedSample] {
         let moments = extractMoments(text)
-        guard moments.count >= 2 else { return [] }
+        guard moments.moments.count >= 2 else { return [] }
 
         var samples: [ParsedSample] = []
-        for index in 0..<(moments.count - 1) {
-            let start = moments[index]
-            let end = moments[index + 1]
+        for index in 0..<(moments.moments.count - 1) {
+            let start = moments.moments[index]
+            let end = moments.moments[index + 1]
             let duration = durationBetween(start, end)
             guard duration > 0 else { continue }
 
@@ -433,10 +433,10 @@ enum HealthTextParser {
             var sample = ParsedSample()
             sample.raw = text
             sample.kind = .sleep(stage)
-            if moments.count >= 2 {
-                sample.start = moments[0].date
-                sample.end = moments[1].date
-                sample.duration = durationBetween(moments[0], moments[1])
+            if moments.moments.count >= 2 {
+                sample.start = moments.moments[0].date
+                sample.end = moments.moments[1].date
+                sample.duration = durationBetween(moments.moments[0], moments.moments[1])
             } else {
                 sample.duration = durationFromText(moments.cleaned)
             }
@@ -476,13 +476,13 @@ enum HealthTextParser {
             }
         case .sleep:
             // 睡眠通道但只有一对时间 → 单独一段
-            if moments.count >= 2 {
+            if moments.moments.count >= 2 {
                 var sample = ParsedSample()
                 sample.raw = text
                 sample.kind = .sleep(.unspecified)
-                sample.start = moments[0].date
-                sample.end = moments[1].date
-                sample.duration = durationBetween(moments[0], moments[1])
+                sample.start = moments.moments[0].date
+                sample.end = moments.moments[1].date
+                sample.duration = durationBetween(moments.moments[0], moments.moments[1])
                 return [sample]
             }
             var sample = ParsedSample()
