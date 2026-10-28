@@ -197,13 +197,17 @@ if !session.empty?
 end
 
 if client.nil?
-  ['legacy', 'sirp'].each do |strategy|
+  # SIRP 是现行路径（legacy pre-SIRP 接口 Apple 已经下线，只会返回 503）。
+  # Apple 偶尔会回 503（限流），所以要重试几次再放弃。
+  ['sirp', 'sirp', 'sirp', 'legacy'].each_with_index do |strategy, idx|
     begin
       client = login_with_strategy(strategy)
       log "LOGIN_OK strategy=#{strategy}"
       break
     rescue StandardError => e
-      log "LOGIN_FAIL strategy=#{strategy} #{e.class}: #{e.message.to_s.lines.first.to_s.strip}"
+      msg = e.message.to_s.lines.first.to_s.strip
+      log "LOGIN_FAIL strategy=#{strategy} try=#{idx + 1} #{e.class}: #{msg}"
+      sleep(10) if idx < 2
     end
   end
 end
