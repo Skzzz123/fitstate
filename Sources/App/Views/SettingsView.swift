@@ -85,7 +85,7 @@ struct SettingsView: View {
             }
 
             if app.usingImportedData {
-                Text("当前显示的是 CSV 导入的数据，不是「健康」App 里的数据。")
+                Text("其中 \(app.importedDays) 天来自 CSV 导入（历史基线），其余来自快捷指令。")
                     .font(.system(size: 12.5))
                     .foregroundStyle(Theme.warn)
                     .fixedSize(horizontal: false, vertical: true)

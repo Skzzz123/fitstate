@@ -8,6 +8,8 @@ enum DataSource: String {
     case healthKit
     case shortcut
     case csv
+    /// 快捷指令 + CSV 同时在用：历史走 CSV，今天走快捷指令。
+    case mixed
 
     var label: String {
         switch self {
@@ -15,6 +17,7 @@ enum DataSource: String {
         case .healthKit: return "「健康」App"
         case .shortcut: return "快捷指令"
         case .csv: return "CSV 导入"
+        case .mixed: return "快捷指令 + CSV"
         }
     }
 }
@@ -174,9 +177,13 @@ final class AppState: ObservableObject {
             let healthCount = fetched.count
             var merged = DataMerger.merge(sources: [fetched, manual, imported])
 
-            usingImportedData = healthCount == 0 && manual.isEmpty && !imported.isEmpty
+            // CSV 只要有数据就在参与（历史基线基本都来自它），
+            // 所以「正在用 CSV」这个提示不能只看「快捷指令有没有数据」。
+            usingImportedData = healthCount == 0 && !imported.isEmpty
             if healthCount > 0 {
                 dataSource = .healthKit
+            } else if !manual.isEmpty && !imported.isEmpty {
+                dataSource = .mixed
             } else if !manual.isEmpty {
                 dataSource = .shortcut
             } else if !imported.isEmpty {
