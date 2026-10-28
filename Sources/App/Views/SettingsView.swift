@@ -5,6 +5,7 @@ struct SettingsView: View {
     @EnvironmentObject private var app: AppState
     @State private var exportURL: URL?
     @State private var showClearConfirm = false
+    @State private var showProbe = false
 
     var body: some View {
         ScrollView {
@@ -143,7 +144,7 @@ struct SettingsView: View {
                 }
             }
 
-            Text("① 打开「快捷指令」→ 新建 → 搜索「查找健康记录」→ 选「心率变异性 (SDNN)」\n② 再加一个「查找健康记录」→ 选「静息心率」\n③ 再加一个「查找健康记录」→ 选「睡眠分析」\n④ 加一个「运行 App」动作 → 选 FitState 的「记录今日健康数据」，把上面三个值填进去\n⑤ 顶部点「自动化」→ 新建 → 时间「每天早上 7:00」→ 依次选刚才的动作")
+            Text("① 打开「快捷指令」→ 新建 → 搜索「查找健康记录」→ 选「心率变异性 (SDNN)」\n② 再加一个「查找健康记录」→ 选「静息心率」\n③ 再加一个「查找健康记录」→ 选「睡眠分析」（开始日期改成「昨天」，否则漏掉昨晚）\n④ 每个「查找」后面加一个「组合文本」，把它的输出接进去\n⑤ 加一个「运行 App」动作 → 选 FitState 的「记录今日健康数据」，把三段文本分别接到「HRV原始数据」「静息心率原始数据」「睡眠分析原始数据」\n⑥ 顶部点「自动化」→ 新建 → 时间「每天早上 7:00」→ 依次选刚才的动作")
                 .font(.system(size: 12.5))
                 .foregroundStyle(Theme.body)
                 .fixedSize(horizontal: false, vertical: true)
@@ -181,8 +182,32 @@ struct SettingsView: View {
                 }
                 .buttonStyle(.plain)
             }
+
+            Divider().overlay(Theme.hairline)
+
+            Text("卡住了？先用「粘贴自检」看看 App 能不能读懂你那边的输出格式")
+                .font(.system(size: 12.5))
+                .foregroundStyle(Theme.muted)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Button {
+                showProbe = true
+            } label: {
+                Text("打开粘贴自检")
+                    .font(.system(size: 13.5, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 11)
+                    .background(Theme.primary)
+                    .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
+            }
+            .buttonStyle(.plain)
         }
         .cardStyle()
+        .sheet(isPresented: $showProbe) {
+            PasteProbeView()
+                .environmentObject(app)
+        }
     }
 
     /// 给「用一行文本记录健康数据」这个 App Intent 用的模板。

@@ -17,6 +17,12 @@ import WidgetKit
 /// 分数、建议、趋势、小组件全都照常出。
 ///
 /// 整个过程没有网络、没有账号、没有 $99。
+///
+/// 三个原始数据参数是**分通道**的
+/// ----------------------------
+/// 「查找健康记录」每个动作只会返回一种指标，所以每个通道单独传，
+/// App 就不用靠「猜这段是 HRV 还是静息心率」来分类 —— 哪怕输出里
+/// 没有任何单位名，靠通道也能正确归类。
 struct RecordHealthDayIntent: AppIntent {
 
     static var title: LocalizedStringResource = "记录今日健康数据"
@@ -28,6 +34,21 @@ struct RecordHealthDayIntent: AppIntent {
     /// 不拉起 App，直接在后台写数据。
     static var openAppWhenRun: Bool = false
 
+    /// 「查找健康记录」选「睡眠分析」的原始输出，整包丢进来即可，
+    /// 深睡 / REM / 核心 / 清醒 / 在床 由 App 自己拆，省掉一串筛选求和动作。
+    @Parameter(title: "睡眠分析原始数据(可选)", default: "")
+    var sleepRawText: String
+
+    /// 「查找健康记录」选「心率变异性」的原始输出。塞进来的话，App 自己取中位数。
+    @Parameter(title: "HRV原始数据(可选)", default: "")
+    var hrvRawText: String
+
+    /// 「查找健康记录」选「静息心率」的原始输出。塞进来的话，App 自己取平均。
+    @Parameter(title: "静息心率原始数据(可选)", default: "")
+    var rhrRawText: String
+
+    /// 直接填数字（三个「查找」动作之后用「数学」算好的单值）。
+    /// 填了之后同一项的原始数据通道会被忽略。
     @Parameter(title: "HRV(ms)", default: 0)
     var hrvMS: Double
 
@@ -50,37 +71,89 @@ struct RecordHealthDayIntent: AppIntent {
     @Parameter(title: "日期(YYYY-MM-DD，留空=今天)", default: "")
     var day: String
 
-    /// 「查找健康记录」选「睡眠分析」的原始输出，整包丢进来即可，
-    /// 深睡 / REM / 核心 / 清醒 / 在床 由 App 自己拆，省掉一串筛选求和动作。
-    @Parameter(title: "睡眠分析原始数据(可选)", default: "")
-    var sleepRawText: String
+    /// 填 1 会在返回结果里附上完整解析诊断（哪段没认出来、原文长什么样）。
+    /// 平时留空即可，排查时打开。
+    @Parameter(title: "解析诊断(填1=详细回执)", default: 0)
+    var debug: Int
 
     func perform() async throws -> some IntentResult {
-        // 优先用原始睡眠数据；解析不出来才退回上面几个数字。
-        var totalSleepMinutes = max(0, sleepMinutes)
-        var deepMinutesValue = max(0, deepMinutes)
-        var remMinutesValue = max(0, remMinutes)
-        var inBedMinutesValue = max(0, inBedMinutes)
+        var notes: [String] = []
+        var diagnostics: [String] = []
 
-        let parsed = SleepSampleParser.parse(sleepRawText)
-        if !parsed.isEmpty {
-            totalSleepMinutes = (parsed.asleep / 60).rounded()
-            deepMinutesValue = (parsed.deepSleep / 60).rounded()
-            remMinutesValue = (parsed.remSleep / 60).rounded()
-            if parsed.inBed > 0 {
-                inBedMinutesValue = (parsed.inBed / 60).rounded()
+        // —— 睡眠
+        var totalSleep = max(0, sleepMinutes) * 60
+        var deep = max(0, deepMinutes) * 60
+        var rem = max(0, remMinutes) * 60
+        var inBed = max(0, inBedMinutes) * 60
+
+        if !sleepRawText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            let parsed = HealthTextParser.parse(sleepRawText, hint: .sleep(.unspecified))
+            if parsed.sleep.sampleCount > 0 {
+                totalSleep = parsed.sleep.totalSleep
+                deep = parsed.sleep.deepSleep
+                rem = parsed.sleep.remSleep
+                inBed = parsed.sleep.inBed
+                notes.append("睡眠：读到 \(parsed.sleep.sampleCount) 段")
+                if parsed.sleep.deepSleep == 0 && parsed.sleep.remSleep == 0 {
+                    notes.append("没有识别出深睡/REM")
+                }
+                if !parsed.unrecognized.isEmpty {
+                    notes.append("有 \(parsed.unrecognized.count) 段没认出来")
+                    diagnostics.append("睡眠未识别片段：" + parsed.unrecognized.prefix(3).joined(separator: " ⏐ "))
+                }
+            } else {
+                notes.append("睡眠数据没解析出来")
+                diagnostics.append("睡眠：完全没解析出分段。原文前 120 字：" + sleepRawText.prefix(120))
             }
+        }
+        // —— HRV：原始列表取中位数（抗离群），否则用单值
+        var hrvValue: Double? = hrvMS > 0 ? hrvMS : nil
+        if !hrvRawText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            let parsed = HealthTextParser.parse(hrvRawText, hint: .hrv)
+            if !parsed.hrvValues.isEmpty {
+                hrvValue = Stats.median(parsed.hrvValues)
+                notes.append("HRV：读到 \(parsed.hrvValues.count) 个值，取中位数")
+                if debug != 0 {
+                    diagnostics.append("HRV 全部值：" + parsed.hrvValues.map { String(format: "%.0f", $0) }.joined(separator: ", "))
+                }
+            } else {
+                notes.append("HRV 数据没解析出来")
+                diagnostics.append("HRV：没解析出数值。原文前 120 字：" + hrvRawText.prefix(120))
+            }
+        }
+
+        // —— 静息心率：原始列表取平均，否则用单值
+        var rhrValue: Double? = restingHR > 0 ? restingHR : nil
+        if !rhrRawText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            let parsed = HealthTextParser.parse(rhrRawText, hint: .rhr)
+            if !parsed.rhrValues.isEmpty {
+                rhrValue = Stats.average(parsed.rhrValues)
+                notes.append("静息心率：读到 \(parsed.rhrValues.count) 个值，取平均")
+                if debug != 0 {
+                    diagnostics.append("静息心率全部值：" + parsed.rhrValues.map { String(format: "%.0f", $0) }.joined(separator: ", "))
+                }
+            } else {
+                notes.append("静息心率数据没解析出来")
+                diagnostics.append("静息心率：没解析出数值。原文前 120 字：" + rhrRawText.prefix(120))
+            }
+        }
+
+        // 什么都没读到就别写脏数据
+        guard hrvValue != nil || rhrValue != nil || totalSleep > 0 else {
+            let reason = notes.isEmpty ? "没有读到任何数据" : notes.joined(separator: "；")
+            let detail = diagnostics.isEmpty ? "" : "｜" + diagnostics.joined(separator: "｜")
+            return .result(dialog: "没记上：\(reason)\(detail)")
         }
 
         let record = ManualDayRecord(
             dayKey: resolvedDayKey,
             date: resolvedDate,
-            hrvMS: hrvMS > 0 ? hrvMS : nil,
-            restingHR: restingHR > 0 ? restingHR : nil,
-            totalSleep: totalSleepMinutes * 60,
-            deepSleep: deepMinutesValue * 60,
-            remSleep: remMinutesValue * 60,
-            inBed: inBedMinutesValue * 60,
+            hrvMS: hrvValue,
+            restingHR: rhrValue,
+            totalSleep: totalSleep,
+            deepSleep: deep,
+            remSleep: rem,
+            inBed: inBed,
             updatedAt: Date()
         )
 
@@ -99,7 +172,9 @@ struct RecordHealthDayIntent: AppIntent {
         }
 
         let scoreText = currentScoreText()
-        return .result(dialog: "已记录 \(record.dayKey)\(sleepText)\(scoreText)")
+        let noteText = notes.isEmpty ? "" : "｜" + notes.joined(separator: "；")
+        let debugText = (debug != 0 && !diagnostics.isEmpty) ? "｜" + diagnostics.joined(separator: "｜") : ""
+        return .result(dialog: "已记录 \(record.dayKey)\(sleepText)\(scoreText)\(noteText)\(debugText)")
     }
 
     // MARK: - 私有
