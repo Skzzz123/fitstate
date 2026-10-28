@@ -139,7 +139,9 @@ $sleepKeywords = @(
     @('asleepdeep', 'deep'), @('asleeprem', 'rem'), @('asleepcore', 'core'),
     @('asleepunspecified', 'unspecified'), @('inbed', 'inBed'), @('awake', 'awake'),
     @('深睡', 'deep'), @('深度睡眠', 'deep'), @('快速眼动', 'rem'),
-    @('核心睡眠', 'core'), @('未分期', 'unspecified'), @('在床', 'inBed'), @('清醒', 'awake')
+    @('核心睡眠', 'core'), @('未分期', 'unspecified'), @('在床', 'inBed'), @('清醒', 'awake'),
+    # 裸分期名放最后：Get-SleepStage 按顺序命中，"asleepREM" 永远赢过 "REM"
+    @('deep', 'deep'), @('rem', 'rem'), @('core', 'core'), @('unspecified', 'unspecified')
 )
 
 function Get-SleepStage {
@@ -188,12 +190,31 @@ function Get-PropMoment {
     param($Props, [string[]]$Keys)
     foreach ($k in $Keys) {
         if ($Props.ContainsKey($k)) {
+            # 带时区的 ISO8601（…T22:30:00Z / +08:00）按它自己的时区算，再折成本地时间
+            $iso = Get-ISO8601Local ([string]$Props[$k])
+            if ($iso) { return $iso }
             $m = Get-Moments ([string]$Props[$k])
             if ($m.Moments.Count -gt 0) { return $m.Moments[0] }
             return $null
         }
     }
     return $null
+}
+
+# 解析带时区的 ISO8601 时间戳，返回和 Get-Moments 一样的字段结构
+function Get-ISO8601Local {
+    param([string]$Text)
+    if (-not $Text) { return $null }
+    $t = $Text.Trim()
+    if (-not ($t.Contains('T') -or $t.EndsWith('Z'))) { return $null }
+    $dto = [datetimeoffset]::MinValue
+    if (-not [datetimeoffset]::TryParse($t, [ref]$dto)) { return $null }
+    $local = $dto.LocalDateTime
+    return [pscustomobject]@{
+        Y = $local.Year; Mo = $local.Month; D = $local.Day
+        H = $local.Hour; Mi = $local.Minute; S = $local.Second
+        TimeOnly = $false
+    }
 }
 
 function New-Outcome {
@@ -687,6 +708,32 @@ Assert-Case 'json sleep output -> stage and duration' {
     $rem = [math]::Round($o.SleepRem / 60); $deep = [math]::Round($o.SleepDeep / 60); $total = [math]::Round($o.SleepTotal / 60)
     if ($rem -ne 30 -or $deep -ne 30 -or $total -ne 60) { return @($false, "rem $rem deep $deep total $total") }
     return @($true, "rem 30 / deep 30 / total 60")
+}
+
+Assert-Case 'bare stage name + times -> stage and duration' {
+    $text = "REM, 2026-10-27 22:30:00, 2026-10-27 23:00:00`nDeep, 2026-10-27 23:00:00, 2026-10-27 23:30:00"
+    $o = Invoke-Parse $text 'sleep'
+    if ($o.SleepCount -ne 2) { return @($false, "got $($o.SleepCount) segments") }
+    $rem = [math]::Round($o.SleepRem / 60); $deep = [math]::Round($o.SleepDeep / 60); $total = [math]::Round($o.SleepTotal / 60)
+    if ($rem -ne 30 -or $deep -ne 30 -or $total -ne 60) { return @($false, "rem $rem deep $deep total $total") }
+    return @($true, "rem 30 / deep 30 / total 60")
+}
+
+Assert-Case 'times first, stage name last' {
+    $o = Invoke-Parse '2026-10-27 22:30:00, 2026-10-27 23:00:00, REM' 'sleep'
+    if ($o.SleepCount -ne 1) { return @($false, "got $($o.SleepCount) segments") }
+    $rem = [math]::Round($o.SleepRem / 60); $total = [math]::Round($o.SleepTotal / 60)
+    if ($rem -ne 30 -or $total -ne 30) { return @($false, "rem $rem total $total") }
+    return @($true, "rem 30 / total 30")
+}
+
+Assert-Case 'json with ISO8601 Z timestamps' {
+    $text = '[{"value":"REM","startDate":"2026-10-27T22:30:00Z","endDate":"2026-10-27T23:00:00Z"}]'
+    $o = Invoke-Parse $text 'sleep'
+    if ($o.SleepCount -ne 1) { return @($false, "got $($o.SleepCount) segments") }
+    $rem = [math]::Round($o.SleepRem / 60)
+    if ($rem -ne 30) { return @($false, "rem $rem") }
+    return @($true, "rem 30")
 }
 
 Assert-Case 'stage-name-only text detected' {

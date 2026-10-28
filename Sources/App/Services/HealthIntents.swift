@@ -130,7 +130,7 @@ struct RecordHealthDayIntent: AppIntent {
             } else {
                 notes.append("睡眠数据没解析出来")
                 if HealthTextParser.isStageNameOnly(sleepInput) {
-                    diagnostics.append("收到的是「只有分期名、没有起止时间」的短文本 —— 请把睡眠那个「组合文本」的类型改成 JSON")
+                    diagnostics.append("收到的是「只有分期名、没有起止时间」的短文本 —— ① 把睡眠那个「组合文本」的类型改成 JSON；② 或用「每个项目重复」把每段的起止时间与分期名拼成一行一段（App 认「开始 结束 分期名」这个格式）")
                 }
                 diagnostics.append("睡眠原文前 120 字：" + sleepInput.prefix(120))
             }

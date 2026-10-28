@@ -398,7 +398,7 @@ fitstate/
 │   ├── sign-ipa.sh                   # 用自有证书 + 描述文件正签
 │   ├── validate.ps1                  # 静态校验（13 项，含 Swift 编译期错误预检）
 │   ├── health-export-to-csv.py       # 「健康」App 导出 → FitState CSV（30 天历史补齐）
-│   └── parser-selftest.ps1           # 解析器 + 合并规则 + 文本参数防护逻辑自测（21 条断言，无 Mac 也能跑）
+│   └── parser-selftest.ps1           # 解析器 + 合并规则 + 文本参数防护逻辑自测（24 条断言，无 Mac 也能跑）
 ├── Sources/
 │   ├── Shared/                       # 主 App 与小组件共用
 │   │   ├── AppGroup.swift            #   App Group 容器
@@ -528,7 +528,7 @@ App 里有个自检工具能免去反复试错：
 3. 直接看到 App 读出了什么：HRV 读到几个值、中位数多少；睡眠分成几段、
    深睡 REM 各多少分钟；以及**哪几段没认出来**（连原文一起显示）
 
-同一屏还有「**跑一遍解析器自检**」按钮，会跑 22 条断言覆盖最容易悄悄算错的地方：
+同一屏还有「**跑一遍解析器自检**」按钮，会跑 25 条断言覆盖最容易悄悄算错的地方：
 
 | 用例 | 验证什么 |
 |---|---|
@@ -556,7 +556,7 @@ App 里有个自检工具能免去反复试错：
 | **参数里的 0** | 视为「没填」，不会把解析出来的睡眠时长覆盖成 0 |
 
 > 这套断言不只跑在 App 里 —— `Scripts/validate.ps1` 之外，
-> 还有一份等价逻辑镜像（`Scripts/parser-selftest.ps1`，PowerShell，21 条）
+> 还有一份等价逻辑镜像（`Scripts/parser-selftest.ps1`，PowerShell，24 条）
 > 可以在没有 Mac 的机器上直接跑，改完解析规则先跑它再提交。
 > 镜像也覆盖了 JSON 分支，所以两边行为是一致的。
 

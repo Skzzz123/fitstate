@@ -398,7 +398,69 @@ enum ParserSelfTest {
             }
         ))
 
-        // —— 21. 「只有分期名、没有时间」的短文本 → 认得出来，好提醒用户改用 JSON
+        // —— 21. 裸分期名（REM / Deep）+ 起止时间 → 分期和时长都要对
+        //
+        // 「组合文本」选短文本时给回来的就是裸名字，
+        // 所以只要一行里还带着起止时间，就必须能认出分期，不能只算出总时长。
+        report.cases.append(check(
+            "裸分期名 + 起止时间 → 分期和时长都对",
+            {
+                let text = """
+                REM, 2026-10-27 22:30:00, 2026-10-27 23:00:00
+                Deep, 2026-10-27 23:00:00, 2026-10-27 23:30:00
+                """
+                let out = HealthTextParser.parse(text, hint: .sleep(.unspecified))
+                guard out.sleep.sampleCount == 2 else {
+                    return (false, "读到 \(out.sleep.sampleCount) 段")
+                }
+                let rem = Int((out.sleep.remSleep / 60).rounded())
+                let deep = Int((out.sleep.deepSleep / 60).rounded())
+                let total = Int((out.sleep.totalSleep / 60).rounded())
+                guard rem == 30, deep == 30, total == 60 else {
+                    return (false, "REM \(rem) / 深睡 \(deep) / 合计 \(total)")
+                }
+                return (true, "REM 30 / 深睡 30 / 合计 60 分")
+            }
+        ))
+
+        // —— 22. 时间在前、分期名在后 → 一样要认得出来
+        report.cases.append(check(
+            "时间在前、分期名在后 → 认得出来",
+            {
+                let out = HealthTextParser.parse(
+                    "2026-10-27 22:30:00, 2026-10-27 23:00:00, REM",
+                    hint: .sleep(.unspecified)
+                )
+                guard out.sleep.sampleCount == 1 else {
+                    return (false, "读到 \(out.sleep.sampleCount) 段")
+                }
+                let rem = Int((out.sleep.remSleep / 60).rounded())
+                let total = Int((out.sleep.totalSleep / 60).rounded())
+                guard rem == 30, total == 30 else {
+                    return (false, "REM \(rem) / 合计 \(total)")
+                }
+                return (true, "REM 30 / 合计 30 分")
+            }
+        ))
+
+        // —— 23. JSON 里带时区的 ISO8601 时间戳（…T22:30:00Z）→ 时长不能差 8 小时
+        report.cases.append(check(
+            "JSON 带时区 ISO8601 → 时长正确",
+            {
+                let text = #"[{"value":"REM","startDate":"2026-10-27T22:30:00Z","endDate":"2026-10-27T23:00:00Z"}]"#
+                let out = HealthTextParser.parse(text, hint: .sleep(.unspecified))
+                guard out.sleep.sampleCount == 1 else {
+                    return (false, "读到 \(out.sleep.sampleCount) 段")
+                }
+                let rem = Int((out.sleep.remSleep / 60).rounded())
+                guard rem == 30 else {
+                    return (false, "REM \(rem) 分（应为 30）")
+                }
+                return (true, "REM 30 分")
+            }
+        ))
+
+        // —— 24. 「只有分期名、没有时间」的短文本 → 认得出来，好提醒用户改用 JSON
         report.cases.append(check(
             "只有分期名的短文本 → 认得出来",
             {
@@ -414,7 +476,7 @@ enum ParserSelfTest {
             }
         ))
 
-        // —— 22. 参数里的 0 = 没填（不能把解析出来的睡眠时长覆盖成 0）
+        // —— 25. 参数里的 0 = 没填（不能把解析出来的睡眠时长覆盖成 0）
         report.cases.append(check(
             "参数里的 0 视为没填",
             {

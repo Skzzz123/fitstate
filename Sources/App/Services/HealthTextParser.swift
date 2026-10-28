@@ -614,6 +614,18 @@ enum HealthTextParser {
     }
 
     /// 睡眠分期的中英文关键词表。
+    ///
+    /// 末尾几个是**裸分期名**（REM / Core / Deep / Unspecified）。
+    ///
+    /// 为什么需要它们
+    /// ------------
+    /// 「组合文本」选短文本时给回来的就是这一串名字，一行一个、没有时间。
+    /// 但只要**同一行里还带着起止时间**，分期名写成 "REM" 还是 "asleepREM" 就该一样认。
+    /// 早先关键词表里只有 "asleepREM" 这种长写法，于是
+    /// "22:30, 23:00, REM" 这种输出只能算出总时长，分期全丢成「未分期」——
+    /// 深睡 / REM 比例直接是假的。
+    ///
+    /// 放在最后：命中重叠时按长度取长的，"asleepREM" 永远赢过 "REM"。
     private static let sleepKeywords: [(String, SleepStage)] = [
         ("asleepdeep", .deep),
         ("asleeprem", .rem),
@@ -627,7 +639,11 @@ enum HealthTextParser {
         ("核心睡眠", .core),
         ("未分期", .unspecified),
         ("在床", .inBed),
-        ("清醒", .awake)
+        ("清醒", .awake),
+        ("deep", .deep),
+        ("rem", .rem),
+        ("core", .core),
+        ("unspecified", .unspecified)
     ]
 
     /// 匹配「数值 + 单位」。
@@ -933,12 +949,36 @@ enum HealthTextParser {
                 continue
             }
             if let text = value as? String {
+                // 带时区的 ISO8601（…T22:30:00Z / +08:00）必须按它自己的时区算，
+                // 直接当本地时间会差 8 小时。
+                if let iso = iso8601Date(text) { return iso }
                 let moments = extractMoments(text)
                 if let first = moments.moments.first { return first.date }
             }
         }
         return nil
     }
+
+    /// 解析带时区的 ISO8601 时间戳。
+    ///
+    /// 只有「带 T 或以 Z 结尾」且能真解析出来的才走这里；
+    /// 其余（"2026-10-27 22:30:00" 这种本地时间写法）仍走 `extractMoments`。
+    private static func iso8601Date(_ text: String) -> Date? {
+        let trimmed = text.trimmingCharacters(in: .whitespaces)
+        guard trimmed.contains("T") || trimmed.hasSuffix("Z") else { return nil }
+        for formatter in iso8601Formatters {
+            if let date = formatter.date(from: trimmed) { return date }
+        }
+        return nil
+    }
+
+    private static let iso8601Formatters: [ISO8601DateFormatter] = {
+        let withFraction = ISO8601DateFormatter()
+        withFraction.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let plain = ISO8601DateFormatter()
+        plain.formatOptions = [.withInternetDateTime]
+        return [withFraction, plain]
+    }()
 
     /// 把字典拼成一行可读文本，认不出来时给用户看。
     private static func describe(_ dict: [String: Any]) -> String {
