@@ -160,6 +160,29 @@ enum HealthTextParser {
 
     // MARK: - 入口
 
+    /// 文本是不是「只有分期名、没有时间」的一串分期列表。
+    ///
+    /// 「查找健康记录」的「组合文本」**默认输出短文本**，
+    /// 对睡眠样本来说就只有分期名（REM / Core / Deep / Awake…），一行一个，
+    /// **没有起止时间** —— 只能知道「昨晚有几个 REM」，算不出任何时长。
+    ///
+    /// 认出来就能给用户一句准话：
+    /// 「把那个『组合文本』的类型改成 JSON，App 才能拿到起止时间」。
+    static func isStageNameOnly(_ text: String) -> Bool {
+        let lines = text.components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+        guard !lines.isEmpty else { return false }
+
+        var stageCount = 0
+        for line in lines {
+            // 有一行带日期 → 不是「只有名字」
+            if !extractMoments(line).moments.isEmpty { return false }
+            if SleepStage.detect(line) != nil { stageCount += 1 }
+        }
+        return stageCount == lines.count
+    }
+
     /// 解析「查找健康记录」的输出。
     ///
     /// - Parameter hint: 调用方已经知道这段文本属于哪个指标。
@@ -248,11 +271,20 @@ enum HealthTextParser {
         let numericValue = lookupNumber(dict, ["value", "值", "数值", "measurement"])
 
         // 先定类型：字典里的类型名最权威，其次单位，最后才是通道提示
+        let typeIsSleep = typeText.lowercased().contains("sleep") || typeText.contains("睡眠")
+        let hintIsSleep: Bool = {
+            if case .sleep = hint { return true }
+            return false
+        }()
         if let stage = SleepStage.detect(typeText) {
             sample.kind = .sleep(stage)
-        } else if let stage = SleepStage.detect(valueText), typeText.lowercased().contains("sleep") || typeText.contains("睡眠") {
+        } else if let stage = SleepStage.detect(valueText), typeIsSleep || hintIsSleep {
+            // 值长得像分期名（REM / Core / Deep…），而通道又告诉我们这是睡眠
+            // → 它就是分期。
+            // 少了这一步，「组合文本」选 JSON 时的分期会全被记成「未分期」，
+            // 总时长对、深睡/REM 全错。
             sample.kind = .sleep(stage)
-        } else if typeText.lowercased().contains("sleep") || typeText.contains("睡眠") {
+        } else if typeIsSleep {
             sample.kind = .sleep(.unspecified)
         } else if isHRVUnit(unitText) {
             sample.kind = .hrv

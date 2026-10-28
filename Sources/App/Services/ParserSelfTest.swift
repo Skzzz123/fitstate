@@ -379,6 +379,55 @@ enum ParserSelfTest {
             }
         ))
 
+        // —— 20. JSON 睡眠输出：分期名在 value 里，起止时间在 startDate / endDate
+        report.cases.append(check(
+            "JSON 睡眠输出 → 分期和时长都对",
+            {
+                let text = #"[{"value":"REM","startDate":"2026-10-27 22:30:00","endDate":"2026-10-27 23:00:00"},{"value":"Deep","startDate":"2026-10-27 23:00:00","endDate":"2026-10-27 23:30:00"}]"#
+                let out = HealthTextParser.parse(text, hint: .sleep(.unspecified))
+                guard out.sleep.sampleCount == 2 else {
+                    return (false, "读到 \(out.sleep.sampleCount) 段")
+                }
+                let rem = Int((out.sleep.remSleep / 60).rounded())
+                let deep = Int((out.sleep.deepSleep / 60).rounded())
+                let total = Int((out.sleep.totalSleep / 60).rounded())
+                guard rem == 30, deep == 30, total == 60 else {
+                    return (false, "REM \(rem) / 深睡 \(deep) / 合计 \(total)")
+                }
+                return (true, "REM 30 / 深睡 30 / 合计 60 分")
+            }
+        ))
+
+        // —— 21. 「只有分期名、没有时间」的短文本 → 认得出来，好提醒用户改用 JSON
+        report.cases.append(check(
+            "只有分期名的短文本 → 认得出来",
+            {
+                let names = "REM\nCore\nREM\nDeep\nAwake"
+                guard HealthTextParser.isStageNameOnly(names) else {
+                    return (false, "没认出来")
+                }
+                let withTime = "REM, 2026-10-27 22:30:00, 2026-10-27 23:00:00"
+                guard !HealthTextParser.isStageNameOnly(withTime) else {
+                    return (false, "带时间的被误判成只有名字")
+                }
+                return (true, "分期名列表认出来了，带时间的没认")
+            }
+        ))
+
+        // —— 22. 参数里的 0 = 没填（不能把解析出来的睡眠时长覆盖成 0）
+        report.cases.append(check(
+            "参数里的 0 视为没填",
+            {
+                guard IntentValueParser.minutes(from: "0") == nil else {
+                    return (false, "0 被当成了有效分钟数")
+                }
+                guard IntentValueParser.minutes(from: "452") == 452 else {
+                    return (false, "452 没认出来")
+                }
+                return (true, "0 → 忽略 / 452 → 452")
+            }
+        ))
+
         return report
     }
 

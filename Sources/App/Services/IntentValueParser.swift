@@ -31,6 +31,14 @@ enum IntentValueParser {
     ///
     /// 「22:30」「深睡 1 小时」这种一律拒绝 ——
     /// 前者是把**时间**当成了分钟，后者是接错了通道。
+    ///
+    /// **0 视为「没填」**
+    /// -----------------
+    /// 这几个参数以前是数字框，默认值 0；改成文本框之后，
+    /// 快捷指令会把原来的 `0` 留在框里。如果把 0 当成有效值，
+    /// 它会**把原始文本通道解析出来的睡眠时长覆盖成 0** ——
+    /// 数据明明读到了，最后写进去的是「睡眠 0 分钟」。
+    /// 所以这里直接返回 nil，让它跟以前一样表示「没填」。
     static func minutes(from text: String) -> Double? {
         let normalized = normalizeDigits(text.trimmingCharacters(in: .whitespacesAndNewlines))
         guard !normalized.isEmpty else { return nil }
@@ -42,7 +50,7 @@ enum IntentValueParser {
             break
         }
 
-        guard isPureNumber(body), let value = Double(body), value >= 0, value <= 24 * 60 else {
+        guard isPureNumber(body), let value = Double(body), value > 0, value <= 24 * 60 else {
             return nil
         }
         return value

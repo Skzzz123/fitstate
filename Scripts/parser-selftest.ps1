@@ -161,6 +161,136 @@ function Test-HRVName { param([string]$t) $t = $t.ToLowerInvariant(); return $t.
 function Test-RHRName { param([string]$t) $t = $t.ToLowerInvariant(); return $t.Contains('静息心率') -or $t.Contains('resting heart rate') -or $t.Contains('rhr') }
 function Test-SleepName { param([string]$t) $t = $t.ToLowerInvariant(); return $t.Contains('睡眠分析') -or $t.Contains('sleep analysis') }
 
+# --- JSON 分支（对应 HealthTextParser.parse 的 JSON 路径）---
+
+function Get-JsonArray {
+    param([string]$Text)
+    $first = $Text.IndexOf('[')
+    $last = $Text.LastIndexOf(']')
+    if ($first -lt 0 -or $last -le $first) { return $null }
+    $slice = $Text.Substring($first, $last - $first + 1)
+    try {
+        $parsed = $slice | ConvertFrom-Json
+    } catch { return $null }
+    if ($null -eq $parsed) { return $null }
+    # 注意：不能写 `return ,@(...)` —— 那一层逗号会让数组多包一层，
+    # 循环里拿到的就是整个数组而不是单个元素。
+    return @($parsed)
+}
+
+function Get-PropText {
+    param($Props, [string[]]$Keys)
+    foreach ($k in $Keys) { if ($Props.ContainsKey($k)) { return [string]$Props[$k] } }
+    return ''
+}
+
+function Get-PropMoment {
+    param($Props, [string[]]$Keys)
+    foreach ($k in $Keys) {
+        if ($Props.ContainsKey($k)) {
+            $m = Get-Moments ([string]$Props[$k])
+            if ($m.Moments.Count -gt 0) { return $m.Moments[0] }
+            return $null
+        }
+    }
+    return $null
+}
+
+function New-Outcome {
+    return [pscustomobject]@{
+        Samples = @(); Unrecognized = @()
+        Hrv = @(); Rhr = @()
+        SleepTotal = 0.0; SleepDeep = 0.0; SleepRem = 0.0; SleepCore = 0.0
+        SleepUnspec = 0.0; SleepAwake = 0.0; SleepInBed = 0.0; SleepCount = 0
+    }
+}
+
+function Invoke-ParseJson {
+    param($Items, [string]$Hint)
+
+    $o = New-Outcome
+    foreach ($item in $Items) {
+        if ($item -is [string]) { continue }
+        if (-not ($item.PSObject.Properties.Count -gt 0)) { continue }
+
+        $props = @{}
+        foreach ($p in $item.PSObject.Properties) {
+            $props[$p.Name.ToLowerInvariant().Replace('_', ' ').Replace('-', ' ')] = $p.Value
+        }
+
+        $typeText = Get-PropText $props @('type', '类型', 'kind', 'category', '名称', 'name')
+        $valueText = Get-PropText $props @('value', '值', '数值', 'measurement')
+        $unitText = Get-PropText $props @('unit', '单位')
+        $start = Get-PropMoment $props @('start date', 'startdate', 'start', '开始日期', '起始日期')
+        $end = Get-PropMoment $props @('end date', 'enddate', 'end', '结束日期', '终止日期')
+
+        $typeIsSleep = ($typeText.ToLowerInvariant().Contains('sleep')) -or $typeText.Contains('睡眠')
+        $hintIsSleep = ($Hint -eq 'sleep')
+
+        # 类型判定顺序必须和 Swift 一致
+        $kind = 'unknown'
+        $stage = Get-SleepStage $typeText
+        if ($stage) { $kind = 'sleep:' + $stage }
+        else {
+            $stage = Get-SleepStage $valueText
+            if ($stage -and ($typeIsSleep -or $hintIsSleep)) { $kind = 'sleep:' + $stage }
+            elseif ($typeIsSleep) { $kind = 'sleep:unspecified' }
+            elseif (Test-HRVUnit $unitText) { $kind = 'hrv' }
+            elseif (Test-RHRUnit $unitText) { $kind = 'rhr' }
+            elseif (Test-HRVName $typeText) { $kind = 'hrv' }
+            elseif (Test-RHRName $typeText) { $kind = 'rhr' }
+            else { $kind = $Hint }
+        }
+
+        if ($kind.StartsWith('sleep:')) {
+            $st = $kind.Substring(6)
+            $dur = $null
+            if ($start -and $end) { $dur = Get-DurationBetween $start $end }
+            if ($null -eq $dur -or $dur -le 0) {
+                foreach ($k in @('duration', '时长', 'durationinseconds')) {
+                    if ($props.ContainsKey($k)) {
+                        $raw = $props[$k]
+                        if ($raw -is [double] -or $raw -is [int]) { $dur = [double]$raw }
+                        else { $dur = Get-DurationFromText ([string]$raw) }
+                        break
+                    }
+                }
+            }
+            Add-SleepSample $o $st $dur ("$typeText $valueText")
+            continue
+        }
+
+        if ($kind -eq 'hrv' -or $kind -eq 'rhr') {
+            $v = 0.0
+            foreach ($k in @('value', '值', '数值', 'measurement')) {
+                if ($props.ContainsKey($k)) {
+                    $raw = $props[$k]
+                    if ($raw -is [double] -or $raw -is [int]) { $v = [double]$raw; break }
+                    $nums = @($valueRe.Matches([string]$raw) | ForEach-Object { [double]$_.Value })
+                    if ($nums.Count -gt 0) { $v = $nums[0]; break }
+                }
+            }
+            if ($kind -eq 'hrv') { $o.Hrv += $v } else { $o.Rhr += $v }
+            $o.Samples += $kind
+        }
+    }
+    return $o
+}
+
+# 只有分期名、没有时间的短文本（「组合文本」默认输出就是这种）
+function Test-StageNameOnly {
+    param([string]$Text)
+    $lines = @($Text -split "`r?`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne '' })
+    if ($lines.Count -eq 0) { return $false }
+    $stageCount = 0
+    foreach ($line in $lines) {
+        $m = Get-Moments $line
+        if ($m.Moments.Count -gt 0) { return $false }
+        if (Get-SleepStage $line) { $stageCount++ }
+    }
+    return ($stageCount -eq $lines.Count)
+}
+
 $unitRe = [regex]'(\d+(?:\.\d+)?)\s*(毫秒|ms|MS|次每分|次/分|次／分|拍/分|bpm|BPM|count/min)'
 $valueRe = [regex]'(?<![\d:.\-])\d+(?:\.\d+)?(?![\d:.\-])'
 
@@ -175,6 +305,13 @@ function Invoke-Parse {
     }
     $Text = $Text.Trim()
     if (-not $Text) { return $o }
+
+    # 1) 先试 JSON
+    $arr = Get-JsonArray $Text
+    if ($arr -and @($arr).Count -gt 0) {
+        $jo = Invoke-ParseJson $arr $Hint
+        if ($jo.Samples.Count -gt 0 -or $jo.Hrv.Count -gt 0 -or $jo.Rhr.Count -gt 0) { return $jo }
+    }
 
     foreach ($lineRaw in ($Text -split "`r?`n")) {
         $line = $lineRaw.Trim()
@@ -334,7 +471,8 @@ function Get-IntentMinutes {
     }
     if ($t -notmatch '^\d+(\.\d+)?$') { return $null }
     $v = [double]$t
-    if ($v -lt 0 -or $v -gt 1440) { return $null }
+    # 0 = 没填（以前是数字框默认值 0，不能让它覆盖解析出来的时长）
+    if ($v -le 0 -or $v -gt 1440) { return $null }
     return $v
 }
 
@@ -540,6 +678,28 @@ Assert-Case 'text param: single value ok, multi without unit rejected' {
     $m = Get-IntentMetric '40 毫秒, 48 毫秒, 52 毫秒' 'hrv'
     if ($m -ne 48) { return @($false, "median $m expected 48") }
     return @($true, 'single 48 / multi-no-unit rejected / median 48')
+}
+
+Assert-Case 'json sleep output -> stage and duration' {
+    $text = '[{"value":"REM","startDate":"2026-10-27 22:30:00","endDate":"2026-10-27 23:00:00"},{"value":"Deep","startDate":"2026-10-27 23:00:00","endDate":"2026-10-27 23:30:00"}]'
+    $o = Invoke-Parse $text 'sleep'
+    if ($o.SleepCount -ne 2) { return @($false, "got $($o.SleepCount) segments") }
+    $rem = [math]::Round($o.SleepRem / 60); $deep = [math]::Round($o.SleepDeep / 60); $total = [math]::Round($o.SleepTotal / 60)
+    if ($rem -ne 30 -or $deep -ne 30 -or $total -ne 60) { return @($false, "rem $rem deep $deep total $total") }
+    return @($true, "rem 30 / deep 30 / total 60")
+}
+
+Assert-Case 'stage-name-only text detected' {
+    $names = "REM`nCore`nREM`nDeep`nAwake"
+    if (-not (Test-StageNameOnly $names)) { return @($false, 'not detected') }
+    if (Test-StageNameOnly 'REM, 2026-10-27 22:30:00, 2026-10-27 23:00:00') { return @($false, 'with time misdetected') }
+    return @($true, 'names detected, with-time not')
+}
+
+Assert-Case 'zero in param means not filled' {
+    if ($null -ne (Get-IntentMinutes '0')) { return @($false, '0 accepted as minutes') }
+    if ((Get-IntentMinutes '452') -ne 452) { return @($false, '452 not parsed') }
+    return @($true, '0 ignored / 452 ok')
 }
 
 Write-Output "=============================================================="
