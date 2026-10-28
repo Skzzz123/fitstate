@@ -1,11 +1,13 @@
 import SwiftUI
 import UIKit
+import Combine
 
 struct SettingsView: View {
     @EnvironmentObject private var app: AppState
     @State private var exportURL: URL?
     @State private var showClearConfirm = false
     @State private var showProbe = false
+    @State private var payload: IntentPayload?
 
     var body: some View {
         ScrollView {
@@ -24,12 +26,20 @@ struct SettingsView: View {
         }
         .background(Theme.background)
         .scrollIndicators(.hidden)
+        .onAppear { loadPayload() }
+        .onReceive(NotificationCenter.default.publisher(for: .fitStateManualDataChanged)) { _ in
+            loadPayload()
+        }
         .confirmationDialog("清空小组件缓存？", isPresented: $showClearConfirm, titleVisibility: .visible) {
             Button("清空", role: .destructive) {
                 SnapshotStore.clear()
             }
             Button("取消", role: .cancel) {}
         }
+    }
+
+    private func loadPayload() {
+        payload = IntentPayloadStore.load()
     }
 
     // MARK: - 权限
@@ -144,9 +154,60 @@ struct SettingsView: View {
                 }
             }
 
-            Text("① 打开「快捷指令」→ 新建 → 搜索「查找健康记录」→ 选「心率变异性 (SDNN)」\n② 再加一个「查找健康记录」→ 选「静息心率」\n③ 再加一个「查找健康记录」→ 选「睡眠分析」（开始日期改成「昨天」，否则漏掉昨晚）\n④ 每个「查找」后面加一个「组合文本」，把它的输出接进去\n⑤ 加一个「运行 App」动作 → 选 FitState 的「记录今日健康数据」，把三段文本分别接到「HRV原始数据」「静息心率原始数据」「睡眠分析原始数据」\n⑥ 顶部点「自动化」→ 新建 → 时间「每天早上 7:00」→ 依次选刚才的动作")
+            if let payload = payload {
+                Divider().overlay(Theme.hairline)
+
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Text("最近一次收到的原文")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(Theme.body)
+                        Spacer()
+                        Text(Fmt.dateTime(payload.at))
+                            .font(.system(size: 11, design: .monospaced))
+                            .foregroundStyle(Theme.muted)
+                    }
+
+                    Text("结果：\(payload.outcome)")
+                        .font(.system(size: 12, design: .monospaced))
+                        .foregroundStyle(Theme.primary)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    Text(String(payload.report.prefix(700)))
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundStyle(Theme.muted)
+                        .textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    Text("这是快捷指令真正送进 App 的内容。数字对不上、格式认不出来，看这里最直接。")
+                        .font(.system(size: 12))
+                        .foregroundStyle(Theme.muted)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    Button {
+                        UIPasteboard.general.string = payload.report
+                        app.errorMessage = "原文已复制，粘贴给我就行"
+                    } label: {
+                        Text("复制原文")
+                            .font(.system(size: 13.5, weight: .medium))
+                            .foregroundStyle(Theme.primary)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 10)
+                            .background(Theme.primary.opacity(0.10))
+                            .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+
+            Text("① 打开「快捷指令」→ 新建 → 搜索「查找健康记录」→ 选「心率变异性 (SDNN)」\n② 再加一个「查找健康记录」→ 选「静息心率」\n③ 再加一个「查找健康记录」→ 选「睡眠分析」（开始日期改成「昨天」，否则漏掉昨晚）\n④ 每个「查找」后面加一个「组合文本」，把它的输出接进去（格式选「短文本」就行）\n⑤ 加一个「运行 App」动作 → 选 FitState 的「记录今日健康数据」，把三段文本分别接到「HRV原始数据」「静息心率原始数据」「睡眠分析原始数据」\n⑥ 后面那 6 个数字参数（HRV(ms) 之类）现在是**文本框**：留空即可。接错了也只会忽略并写在回执里，不会把数据搞坏\n⑦ 顶部点「自动化」→ 新建 → 时间「每天早上 7:00」→ 依次选刚才的动作")
                 .font(.system(size: 12.5))
                 .foregroundStyle(Theme.body)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Text("❗ 中间绝对不要加「从合并后的文本获取数字」这一步 —— 它会把文本变成数字列表，睡眠分期和起止时间全丢掉。")
+                .font(.system(size: 12.5, weight: .medium))
+                .foregroundStyle(Theme.warn)
                 .fixedSize(horizontal: false, vertical: true)
 
             Text("跑完之后回到这个 App，下拉刷新就能看到分数。数据只写在这台 iPhone 里。")

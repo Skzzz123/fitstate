@@ -49,26 +49,39 @@ struct RecordHealthDayIntent: AppIntent {
 
     /// 直接填数字（三个「查找」动作之后用「数学」算好的单值）。
     ///
+    /// 这些参数是**文本框**，不是数字框。
+    ///
+    /// 为什么
+    /// ------
+    /// 原来是 `Double`。用户把「查找健康记录」的输出接上去时，
+    /// 快捷指令会在**调用本 Intent 之前**就抛「无法将文本转换为数字」而中止 ——
+    /// Intent 根本没被调起来，App 里一条数据都没有，回执也看不到。
+    ///
+    /// 现在接什么都不报错。App 会自己判断：
+    ///   - 填了纯数字 → 直接用；
+    ///   - 填了带单位的一批样本 → 按这个通道取中位数 / 平均；
+    ///   - 认不出来（接错通道、时间戳、别的东西）→ **忽略**，并在回执里说明。
+    ///
     /// 优先级是**逐项**的：这一项你填了数（> 0）就以你填的为准，
-    /// 没填（0）就沿用原始数据通道解析出来的结果。
+    /// 没填就沿用原始数据通道解析出来的结果。
     /// 所以「只填睡眠时长、其余留空」也能拿到文本里的深睡 / REM 分期。
-    @Parameter(title: "HRV(ms)", default: 0)
-    var hrvMS: Double
+    @Parameter(title: "HRV(ms)", default: "")
+    var hrvMS: String
 
-    @Parameter(title: "静息心率(bpm)", default: 0)
-    var restingHR: Double
+    @Parameter(title: "静息心率(bpm)", default: "")
+    var restingHR: String
 
-    @Parameter(title: "睡眠时长(分钟)", default: 0)
-    var sleepMinutes: Double
+    @Parameter(title: "睡眠时长(分钟)", default: "")
+    var sleepMinutes: String
 
-    @Parameter(title: "深睡(分钟)", default: 0)
-    var deepMinutes: Double
+    @Parameter(title: "深睡(分钟)", default: "")
+    var deepMinutes: String
 
-    @Parameter(title: "REM(分钟)", default: 0)
-    var remMinutes: Double
+    @Parameter(title: "REM(分钟)", default: "")
+    var remMinutes: String
 
-    @Parameter(title: "在床(分钟)", default: 0)
-    var inBedMinutes: Double
+    @Parameter(title: "在床(分钟)", default: "")
+    var inBedMinutes: String
 
     /// 留空表示今天。格式 YYYY-MM-DD。
     @Parameter(title: "日期(YYYY-MM-DD，留空=今天)", default: "")
@@ -83,14 +96,24 @@ struct RecordHealthDayIntent: AppIntent {
         var notes: [String] = []
         var diagnostics: [String] = []
 
+        let sleepInput = sleepRawText
+        let hrvInput = hrvRawText
+        let rhrInput = rhrRawText
+        let debugOn = debug != 0
+
+        // 通道实收多少字 —— 失败时**无条件**报出来。
+        // 这样回执本身就是证据：「变量是空的」和「格式没认出来」是两回事，
+        // 不用猜、不用截图，回执直接告诉你每个通道收了多少。
+        let channelReport = "收到 睡眠\(sleepInput.count)字/HRV\(hrvInput.count)字/心率\(rhrInput.count)字"
+
         // —— 睡眠：先解析原始文本，再让「你填的数字」逐项覆盖
         var totalSleep = 0.0
         var deep = 0.0
         var rem = 0.0
         var inBed = 0.0
 
-        if !sleepRawText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            let parsed = HealthTextParser.parse(sleepRawText, hint: .sleep(.unspecified))
+        if !IntentValueParser.isBlank(sleepInput) {
+            let parsed = HealthTextParser.parse(sleepInput, hint: .sleep(.unspecified))
             if parsed.sleep.sampleCount > 0 {
                 totalSleep = parsed.sleep.totalSleep
                 deep = parsed.sleep.deepSleep
@@ -106,54 +129,111 @@ struct RecordHealthDayIntent: AppIntent {
                 }
             } else {
                 notes.append("睡眠数据没解析出来")
-                diagnostics.append("睡眠：完全没解析出分段。原文前 120 字：" + sleepRawText.prefix(120))
+                diagnostics.append("睡眠原文前 120 字：" + sleepInput.prefix(120))
             }
         }
-        // 数字参数逐项优先（填了 > 0 的以你填的为准，没填的留上面的解析结果）
-        if sleepMinutes > 0 { totalSleep = sleepMinutes * 60 }
-        if deepMinutes > 0 { deep = deepMinutes * 60 }
-        if remMinutes > 0 { rem = remMinutes * 60 }
-        if inBedMinutes > 0 { inBed = inBedMinutes * 60 }
 
-        // —— HRV：原始列表取中位数（抗离群），否则用单值
+        // 数值参数逐项优先（填了就以你填的为准，没填的留上面解析出来的）
+        // 注意：认不出来**不算错**，只是忽略 —— 接错通道的文本绝不能当成分钟数写进去。
+        if let value = IntentValueParser.minutes(from: sleepMinutes) {
+            totalSleep = value * 60
+            notes.append("睡眠时长用参数 \(Int(value.rounded())) 分")
+        } else if !IntentValueParser.isBlank(sleepMinutes) {
+            diagnostics.append("睡眠时长(分钟) 参数收到 \(sleepMinutes.count) 字，认不出数字（已忽略）")
+        }
+        if let value = IntentValueParser.minutes(from: deepMinutes) {
+            deep = value * 60
+        } else if !IntentValueParser.isBlank(deepMinutes) {
+            diagnostics.append("深睡(分钟) 参数收到 \(deepMinutes.count) 字，认不出数字（已忽略）")
+        }
+        if let value = IntentValueParser.minutes(from: remMinutes) {
+            rem = value * 60
+        } else if !IntentValueParser.isBlank(remMinutes) {
+            diagnostics.append("REM(分钟) 参数收到 \(remMinutes.count) 字，认不出数字（已忽略）")
+        }
+        if let value = IntentValueParser.minutes(from: inBedMinutes) {
+            inBed = value * 60
+        } else if !IntentValueParser.isBlank(inBedMinutes) {
+            diagnostics.append("在床(分钟) 参数收到 \(inBedMinutes.count) 字，认不出数字（已忽略）")
+        }
+
+        // —— HRV：参数优先，其次原始列表取中位数（抗离群）
         var hrvValue: Double? = nil
-        if !hrvRawText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            let parsed = HealthTextParser.parse(hrvRawText, hint: .hrv)
-            if !parsed.hrvValues.isEmpty {
-                hrvValue = NumericSampleParser.median(parsed.hrvValues)
-                notes.append("HRV：读到 \(parsed.hrvValues.count) 个值，取中位数")
-                if debug != 0 {
-                    diagnostics.append("HRV 全部值：" + parsed.hrvValues.map { String(format: "%.0f", $0) }.joined(separator: ", "))
+        if let value = IntentValueParser.metric(from: hrvMS, kind: .hrv) {
+            hrvValue = value
+            notes.append("HRV 用参数 \(Int(value.rounded()))")
+        } else if !IntentValueParser.isBlank(hrvMS) {
+            diagnostics.append("HRV(ms) 参数收到 \(hrvMS.count) 字，认不出数值（已忽略）")
+        }
+        if hrvValue == nil, !IntentValueParser.isBlank(hrvInput) {
+            let parsed = HealthTextParser.parse(hrvInput, hint: .hrv)
+            let values = parsed.hrvValues.filter { IntentValueParser.hrvRange.contains($0) }
+            if !values.isEmpty {
+                hrvValue = NumericSampleParser.median(values)
+                notes.append("HRV：读到 \(values.count) 个值，取中位数")
+                if debugOn {
+                    diagnostics.append("HRV 全部值：" + values.map { String(format: "%.0f", $0) }.joined(separator: ", "))
                 }
             } else {
                 notes.append("HRV 数据没解析出来")
-                diagnostics.append("HRV：没解析出数值。原文前 120 字：" + hrvRawText.prefix(120))
+                diagnostics.append("HRV 原文前 120 字：" + hrvInput.prefix(120))
             }
         }
-        if hrvMS > 0 { hrvValue = hrvMS }
 
-        // —— 静息心率：原始列表取平均，否则用单值
+        // —— 静息心率：参数优先，其次原始列表取平均
         var rhrValue: Double? = nil
-        if !rhrRawText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            let parsed = HealthTextParser.parse(rhrRawText, hint: .rhr)
-            if !parsed.rhrValues.isEmpty {
-                rhrValue = NumericSampleParser.average(parsed.rhrValues)
-                notes.append("静息心率：读到 \(parsed.rhrValues.count) 个值，取平均")
-                if debug != 0 {
-                    diagnostics.append("静息心率全部值：" + parsed.rhrValues.map { String(format: "%.0f", $0) }.joined(separator: ", "))
+        if let value = IntentValueParser.metric(from: restingHR, kind: .rhr) {
+            rhrValue = value
+            notes.append("静息心率用参数 \(Int(value.rounded()))")
+        } else if !IntentValueParser.isBlank(restingHR) {
+            diagnostics.append("静息心率(bpm) 参数收到 \(restingHR.count) 字，认不出数值（已忽略）")
+        }
+        if rhrValue == nil, !IntentValueParser.isBlank(rhrInput) {
+            let parsed = HealthTextParser.parse(rhrInput, hint: .rhr)
+            let values = parsed.rhrValues.filter { IntentValueParser.rhrRange.contains($0) }
+            if !values.isEmpty {
+                rhrValue = NumericSampleParser.average(values)
+                notes.append("静息心率：读到 \(values.count) 个值，取平均")
+                if debugOn {
+                    diagnostics.append("静息心率全部值：" + values.map { String(format: "%.0f", $0) }.joined(separator: ", "))
                 }
             } else {
                 notes.append("静息心率数据没解析出来")
-                diagnostics.append("静息心率：没解析出数值。原文前 120 字：" + rhrRawText.prefix(120))
+                diagnostics.append("静息心率原文前 120 字：" + rhrInput.prefix(120))
             }
         }
-        if restingHR > 0 { rhrValue = restingHR }
+
+        // —— 留档：不管成没成都存一份原文，设置页能直接看到「快捷指令到底送来了什么」
+        func savePayload(outcome: String) {
+            IntentPayloadStore.save(IntentPayload(
+                at: Date(),
+                dayKey: resolvedDayKey,
+                sleepRaw: sleepInput,
+                hrvRaw: hrvInput,
+                rhrRaw: rhrInput,
+                sleepMinutes: sleepMinutes,
+                deepMinutes: deepMinutes,
+                remMinutes: remMinutes,
+                inBedMinutes: inBedMinutes,
+                hrvMS: hrvMS,
+                restingHR: restingHR,
+                outcome: outcome,
+                detail: diagnostics.joined(separator: "｜")
+            ))
+        }
 
         // 什么都没读到就别写脏数据
         guard hrvValue != nil || rhrValue != nil || totalSleep > 0 else {
             let reason = notes.isEmpty ? "没有读到任何数据" : notes.joined(separator: "；")
-            let detail = diagnostics.isEmpty ? "" : "｜" + diagnostics.joined(separator: "｜")
-            return .result(dialog: "没记上：\(reason)\(detail)")
+            var detail = [channelReport]
+            detail.append(contentsOf: diagnostics)
+            // 原文摘要：非空的通道各给 80 字，回执本身就够定位问题
+            for (label, text) in [("睡眠", sleepInput), ("HRV", hrvInput), ("心率", rhrInput)]
+            where !IntentValueParser.isBlank(text) {
+                detail.append("\(label)原文：" + String(text.prefix(debugOn ? 200 : 80)))
+            }
+            savePayload(outcome: "没记上：\(reason)")
+            return .result(dialog: "没记上：\(reason)｜" + detail.joined(separator: "｜"))
         }
 
         let record = ManualDayRecord(
@@ -170,7 +250,8 @@ struct RecordHealthDayIntent: AppIntent {
 
         // 合并写入：某条通道偶发失败，不会把这一天**已有**的数据抹成 0
         guard let stored = ManualHealthStore.upsertMerging(record) else {
-            return .result(dialog: "写入失败。")
+            savePayload(outcome: "写入失败")
+            return .result(dialog: "写入失败。｜\(channelReport)")
         }
 
         WidgetCenter.shared.reloadAllTimelines()
@@ -185,8 +266,9 @@ struct RecordHealthDayIntent: AppIntent {
 
         let scoreText = currentScoreText(for: stored)
         let noteText = notes.isEmpty ? "" : "｜" + notes.joined(separator: "；")
-        let debugText = (debug != 0 && !diagnostics.isEmpty) ? "｜" + diagnostics.joined(separator: "｜") : ""
-        return .result(dialog: "已记录 \(stored.dayKey)\(sleepText)\(scoreText)\(noteText)\(debugText)")
+        let debugText = (debugOn && !diagnostics.isEmpty) ? "｜" + diagnostics.joined(separator: "｜") : ""
+        savePayload(outcome: "已记录 \(stored.dayKey)")
+        return .result(dialog: "已记录 \(stored.dayKey)\(sleepText)\(scoreText)｜\(channelReport)\(noteText)\(debugText)")
     }
 
     // MARK: - 私有

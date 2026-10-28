@@ -95,24 +95,28 @@ function Get-DurationBetween {
         return $d
     }
 
+    # 注意：必须显式 -Millisecond 0。
+    # Get-Date 只覆盖指定字段，毫秒会沿用「当前时刻」，
+    # 于是同一个时间点两次取值会差几毫秒 —— 零时长分段就变成了 0.003 秒，
+    # 被判成「有效分段」，自检结果随机飘。
     if ($B.TimeOnly) {
-        $start = (Get-Date -Year $A.Y -Month $A.Mo -Day $A.D -Hour $A.H -Minute $A.Mi -Second $A.S)
-        $end = (Get-Date -Year $A.Y -Month $A.Mo -Day $A.D -Hour $B.H -Minute $B.Mi -Second $B.S)
+        $start = (Get-Date -Year $A.Y -Month $A.Mo -Day $A.D -Hour $A.H -Minute $A.Mi -Second $A.S -Millisecond 0)
+        $end = (Get-Date -Year $A.Y -Month $A.Mo -Day $A.D -Hour $B.H -Minute $B.Mi -Second $B.S -Millisecond 0)
         $d = ($end - $start).TotalSeconds
         if ($d -lt 0) { $d += 86400 }
         return $d
     }
 
     if ($A.TimeOnly) {
-        $start = (Get-Date -Year $B.Y -Month $B.Mo -Day $B.D -Hour $A.H -Minute $A.Mi -Second $A.S)
-        $end = (Get-Date -Year $B.Y -Month $B.Mo -Day $B.D -Hour $B.H -Minute $B.Mi -Second $B.S)
+        $start = (Get-Date -Year $B.Y -Month $B.Mo -Day $B.D -Hour $A.H -Minute $A.Mi -Second $A.S -Millisecond 0)
+        $end = (Get-Date -Year $B.Y -Month $B.Mo -Day $B.D -Hour $B.H -Minute $B.Mi -Second $B.S -Millisecond 0)
         $d = ($end - $start).TotalSeconds
         if ($d -lt 0) { $d += 86400 }
         return $d
     }
 
-    $start = (Get-Date -Year $A.Y -Month $A.Mo -Day $A.D -Hour $A.H -Minute $A.Mi -Second $A.S)
-    $end = (Get-Date -Year $B.Y -Month $B.Mo -Day $B.D -Hour $B.H -Minute $B.Mi -Second $B.S)
+    $start = (Get-Date -Year $A.Y -Month $A.Mo -Day $A.D -Hour $A.H -Minute $A.Mi -Second $A.S -Millisecond 0)
+    $end = (Get-Date -Year $B.Y -Month $B.Mo -Day $B.D -Hour $B.H -Minute $B.Mi -Second $B.S -Millisecond 0)
     return ($end - $start).TotalSeconds
 }
 
@@ -205,11 +209,16 @@ function Invoke-Parse {
                     $piece = $line.Substring($segStart, $segEnd - $segStart)
                     $mom = Get-Moments $piece
                     if ($mom.Moments.Count -ge 2) {
-                        $dur = Get-DurationBetween $mom.Moments[0] $mom.Moments[1]
+                        # 时间点两两配对：段里可能藏着没写分期名的片段，只取头两个会丢时长
+                        $cursor = 0
+                        while ($cursor + 1 -lt $mom.Moments.Count) {
+                            $dur = Get-DurationBetween $mom.Moments[$cursor] $mom.Moments[$cursor + 1]
+                            if ($dur -gt 0) { Add-SleepSample $o $ordered[$i].Stage $dur $piece }
+                            $cursor += 2
+                        }
                     } else {
-                        $dur = Get-DurationFromText $mom.Cleaned
+                        Add-SleepSample $o $ordered[$i].Stage (Get-DurationFromText $mom.Cleaned) $piece
                     }
-                    Add-SleepSample $o $ordered[$i].Stage $dur $piece
                 }
                 continue
             }
@@ -311,6 +320,44 @@ function Add-SleepSample {
 
 function Get-Median { param($v) if ($v.Count -eq 0) { return $null }; $s = @($v | Sort-Object); $mid = [int][math]::Floor($s.Count / 2); if ($s.Count % 2 -eq 1) { return $s[$mid] }; return ($s[$mid - 1] + $s[$mid]) / 2 }
 function Get-Average { param($v) if ($v.Count -eq 0) { return $null }; return ($v | Measure-Object -Average).Average }
+
+# --- IntentValueParser 的逻辑镜像 ---
+# 对应 Swift 源码：Sources/App/Services/IntentValueParser.swift
+
+function Get-IntentMinutes {
+    param([string]$Text)
+    if ($null -eq $Text) { return $null }
+    $t = $Text.Trim()
+    if (-not $t) { return $null }
+    foreach ($u in @('分钟', 'min', 'mins', 'm')) {
+        if ($t.ToLowerInvariant().EndsWith($u)) { $t = $t.Substring(0, $t.Length - $u.Length).Trim(); break }
+    }
+    if ($t -notmatch '^\d+(\.\d+)?$') { return $null }
+    $v = [double]$t
+    if ($v -lt 0 -or $v -gt 1440) { return $null }
+    return $v
+}
+
+function Get-IntentMetric {
+    param([string]$Text, [string]$Kind)
+    if ($null -eq $Text) { return $null }
+    $t = $Text.Trim()
+    if (-not $t) { return $null }
+    if (Get-SleepStage $t) { return $null }
+    $low = $t.ToLowerInvariant()
+    $hasHRVUnit = $t.Contains('毫秒') -or $low.Contains('ms') -or $low.Contains('millisecond')
+    $hasRHRUnit = $t.Contains('次/分') -or $t.Contains('次／分') -or $t.Contains('次每分') -or $t.Contains('拍/分') -or $low.Contains('bpm') -or $low.Contains('count/min')
+    if ($Kind -eq 'hrv' -and $hasRHRUnit) { return $null }
+    if ($Kind -eq 'rhr' -and $hasHRVUnit) { return $null }
+    $o = Invoke-Parse $t $Kind
+    $values = if ($Kind -eq 'hrv') { @($o.Hrv) } else { @($o.Rhr) }
+    if ($Kind -eq 'hrv') { $values = @($values | Where-Object { $_ -ge 5 -and $_ -le 500 }) }
+    else { $values = @($values | Where-Object { $_ -ge 25 -and $_ -le 220 }) }
+    if ($values.Count -eq 0) { return $null }
+    if (-not $hasHRVUnit -and -not $hasRHRUnit -and $values.Count -gt 1) { return $null }
+    if ($Kind -eq 'hrv') { return Get-Median $values }
+    return Get-Average $values
+}
 
 # ---------- cases ----------
 $pass = 0; $fail = 0
@@ -452,6 +499,47 @@ Assert-Case 'merge: new with sleep replaces whole group' {
     if ($o.Hrv -ne 48) { return @($false, "hrv lost") }
     if ($o.Rhr -ne 56) { return @($false, "rhr not updated") }
     return @($true, "sleep group replaced 420 min / hrv kept 48 / rhr updated 56")
+}
+
+Assert-Case 'sleep missing stage name -> duration kept' {
+    $text = '深度睡眠, 2026-10-26 23:00:00, 2026-10-27 01:00:00, 睡眠, 2026-10-27 01:00:00, 2026-10-27 03:00:00'
+    $o = Invoke-Parse $text 'sleep'
+    $total = [math]::Round($o.SleepTotal / 60)
+    if ($total -ne 240) { return @($false, "got $total expected 240") }
+    return @($true, "240 min")
+}
+
+Assert-Case 'text param: plain number accepted' {
+    $a = Get-IntentMinutes '452'
+    $b = Get-IntentMinutes '452 分钟'
+    $c = Get-IntentMetric '48' 'hrv'
+    if ($a -ne 452) { return @($false, "452 not parsed: $a") }
+    if ($b -ne 452) { return @($false, "452 分钟 not parsed: $b") }
+    if ($c -ne 48) { return @($false, "48 not parsed: $c") }
+    return @($true, "452 min / 48 ms")
+}
+
+Assert-Case 'text param: unparseable rejected' {
+    if ($null -ne (Get-IntentMinutes '22:30')) { return @($false, '22:30 accepted as minutes') }
+    if ($null -ne (Get-IntentMinutes '深睡 1 小时')) { return @($false, 'stage text accepted as minutes') }
+    if ($null -ne (Get-IntentMinutes '')) { return @($false, 'empty accepted') }
+    return @($true, 'timestamp / stage text / empty all rejected')
+}
+
+Assert-Case 'text param: wrong channel rejected' {
+    $sleepText = '深度睡眠, 2026-10-26 23:00:00, 2026-10-27 01:00:00'
+    if ($null -ne (Get-IntentMetric $sleepText 'hrv')) { return @($false, 'sleep text accepted as HRV') }
+    if ($null -ne (Get-IntentMetric '48 毫秒' 'rhr')) { return @($false, 'HRV text accepted as RHR') }
+    if ($null -ne (Get-IntentMetric '54 次/分' 'hrv')) { return @($false, 'RHR text accepted as HRV') }
+    return @($true, 'sleep->HRV, HRV->RHR, RHR->HRV all rejected')
+}
+
+Assert-Case 'text param: single value ok, multi without unit rejected' {
+    if ((Get-IntentMetric '48' 'hrv') -ne 48) { return @($false, 'single number rejected') }
+    if ($null -ne (Get-IntentMetric '40, 48, 52' 'hrv')) { return @($false, 'multi without unit accepted') }
+    $m = Get-IntentMetric '40 毫秒, 48 毫秒, 52 毫秒' 'hrv'
+    if ($m -ne 48) { return @($false, "median $m expected 48") }
+    return @($true, 'single 48 / multi-no-unit rejected / median 48')
 }
 
 Write-Output "=============================================================="

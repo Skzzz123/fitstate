@@ -47,4 +47,14 @@ enum Fmt {
         let weekday = ["日", "一", "二", "三", "四", "五", "六"][calendar.component(.weekday, from: date) - 1]
         return "\(month)月\(day)日 周\(weekday)"
     }
+
+    /// "2026-10-27 08:15:30"
+    static func dateTime(_ date: Date, calendar: Calendar = .current) -> String {
+        let parts = calendar.dateComponents([.year, .month, .day, .hour, .minute, .second], from: date)
+        guard let year = parts.year, let month = parts.month, let day = parts.day,
+              let hour = parts.hour, let minute = parts.minute, let second = parts.second else {
+            return ""
+        }
+        return String(format: "%04d-%02d-%02d %02d:%02d:%02d", year, month, day, hour, minute, second)
+    }
 }

@@ -295,6 +295,90 @@ enum ParserSelfTest {
             }
         ))
 
+        // —— 15. 睡眠：某一段没写分期名 → 时间点两两配对，时长不丢
+        report.cases.append(check(
+            "睡眠缺分期名 → 时长不丢",
+            {
+                let text = "深度睡眠, 2026-10-26 23:00:00, 2026-10-27 01:00:00, 睡眠, 2026-10-27 01:00:00, 2026-10-27 03:00:00"
+                let out = HealthTextParser.parse(text, hint: .sleep(.unspecified))
+                let total = Int((out.sleep.totalSleep / 60).rounded())
+                guard total == 240 else {
+                    return (false, "总时长 \(total) 分（应为 240）")
+                }
+                return (true, "240 分（两段各 120 分）")
+            }
+        ))
+
+        // —— 16. 文本参数：纯数字 → 直接用
+        report.cases.append(check(
+            "文本参数：纯数字直接用",
+            {
+                guard IntentValueParser.minutes(from: "452") == 452 else {
+                    return (false, "452 没认出来")
+                }
+                guard IntentValueParser.minutes(from: "452 分钟") == 452 else {
+                    return (false, "452 分钟 没认出来")
+                }
+                guard IntentValueParser.metric(from: "48", kind: .hrv) == 48 else {
+                    return (false, "HRV 48 没认出来")
+                }
+                return (true, "452 分 / 48 ms")
+            }
+        ))
+
+        // —— 17. 文本参数：认不出来就拒绝（别把时间当成分钟）
+        report.cases.append(check(
+            "文本参数：认不出就拒绝",
+            {
+                guard IntentValueParser.minutes(from: "22:30") == nil else {
+                    return (false, "22:30 被当成了分钟数")
+                }
+                guard IntentValueParser.minutes(from: "深睡 1 小时") == nil else {
+                    return (false, "带分期的文本被当成了分钟数")
+                }
+                guard IntentValueParser.minutes(from: "") == nil else {
+                    return (false, "空文本居然认出了数值")
+                }
+                return (true, "时间戳 / 带分期文本 / 空文本 全部拒绝")
+            }
+        ))
+
+        // —— 18. 文本参数：接错通道 → 拒绝（绝不写脏数据）
+        report.cases.append(check(
+            "文本参数：接错通道拒绝",
+            {
+                let sleepText = "深度睡眠, 2026-10-26 23:00:00, 2026-10-27 01:00:00"
+                guard IntentValueParser.metric(from: sleepText, kind: .hrv) == nil else {
+                    return (false, "睡眠文本被当成了 HRV")
+                }
+                guard IntentValueParser.metric(from: "48 毫秒", kind: .rhr) == nil else {
+                    return (false, "HRV 文本被当成了静息心率")
+                }
+                guard IntentValueParser.metric(from: "54 次/分", kind: .hrv) == nil else {
+                    return (false, "静息心率文本被当成了 HRV")
+                }
+                return (true, "睡眠→HRV、HRV→心率、心率→HRV 全部拒绝")
+            }
+        ))
+
+        // —— 19. 文本参数：单个数字接受，多个没单位拒绝
+        report.cases.append(check(
+            "文本参数：单值接受、多值无单位拒绝",
+            {
+                guard IntentValueParser.metric(from: "48", kind: .hrv) == 48 else {
+                    return (false, "单个数字没认出来")
+                }
+                guard IntentValueParser.metric(from: "40, 48, 52", kind: .hrv) == nil else {
+                    return (false, "多个没单位的数字被当成了 HRV")
+                }
+                let median = IntentValueParser.metric(from: "40 毫秒, 48 毫秒, 52 毫秒", kind: .hrv)
+                guard median == 48 else {
+                    return (false, "带单位的一批样本中位数 \(median ?? -1)（应为 48）")
+                }
+                return (true, "单值 48 / 无单位多值拒绝 / 带单位中位数 48")
+            }
+        ))
+
         return report
     }
 

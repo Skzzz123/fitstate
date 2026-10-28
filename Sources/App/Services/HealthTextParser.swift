@@ -367,6 +367,15 @@ enum HealthTextParser {
     ///
     /// 每段 = 「上一个关键词之后」到「下一个关键词之前」，
     /// 这样起止时间无论写在分期词前面还是后面都不会丢。
+    ///
+    /// 段内的时间点**两两配对**
+    /// ----------------------
+    /// 一段里可能还藏着**没写分期名**的片段 ——
+    /// 比如 Apple 只写「睡眠」而没有「核心睡眠」，那一段就没命中关键词，
+    /// 于是它的时间点会落在相邻的命中段里。
+    /// 这时如果只取头两个时间点，后面那几段的时长就凭空丢了（总睡眠会偏短）。
+    /// 所以改成两两配对：多出来的时间点照样算成段（分期沿用当前这段的），
+    /// **总时长一定不丢**，宁可分期粗一点。
     private static func sleepSegments(in text: String, hits: [StageHit]) -> [ParsedSample] {
         let ns = text as NSString
         var samples: [ParsedSample] = []
@@ -377,19 +386,33 @@ enum HealthTextParser {
             guard end > start else { continue }
             let piece = ns.substring(with: NSRange(location: start, length: end - start))
 
-            var sample = ParsedSample()
-            sample.raw = piece
-            sample.kind = .sleep(hit.stage)
-
             let moments = extractMoments(piece)
-            if moments.moments.count >= 2 {
-                sample.start = moments.moments[0].date
-                sample.end = moments.moments[1].date
-                sample.duration = durationBetween(moments.moments[0], moments.moments[1])
-            } else {
+            guard moments.moments.count >= 2 else {
+                // 时间点不够 → 只能靠「X 小时 Y 分钟」这种写法
+                var sample = ParsedSample()
+                sample.raw = piece
+                sample.kind = .sleep(hit.stage)
                 sample.duration = durationFromText(moments.cleaned)
+                samples.append(sample)
+                continue
             }
-            samples.append(sample)
+
+            var cursor = 0
+            while cursor + 1 < moments.moments.count {
+                let begin = moments.moments[cursor]
+                let finish = moments.moments[cursor + 1]
+                let duration = durationBetween(begin, finish)
+                if duration > 0 {
+                    var sample = ParsedSample()
+                    sample.raw = piece
+                    sample.kind = .sleep(hit.stage)
+                    sample.start = begin.date
+                    sample.end = finish.date
+                    sample.duration = duration
+                    samples.append(sample)
+                }
+                cursor += 2
+            }
         }
 
         return samples
