@@ -233,7 +233,7 @@ struct RecordHealthDayIntent: AppIntent {
                 detail.append("\(label)原文：" + String(text.prefix(debugOn ? 200 : 80)))
             }
             savePayload(outcome: "没记上：\(reason)")
-            return .result(dialog: "没记上：\(reason)｜" + detail.joined(separator: "｜"))
+            return .result(dialog: "没记上：\(reason)｜\(detail.joined(separator: "｜"))")
         }
 
         let record = ManualDayRecord(

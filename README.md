@@ -209,16 +209,20 @@ Actions → **Build iOS App** → **Run workflow**，`sign_mode` 选 **`portal`*
 
 本机没有 Mac，Swift 代码只能靠云端编译验证 —— 一次往返好几分钟。
 所以校验器除了常规检查（结构、括号配平、类型重名、import 匹配、
-Info.plist 键、YAML），还做了三件别人得等 xcodebuild 才发现的事：
+Info.plist 键、YAML），还做了四件别人得等 xcodebuild 才发现的事：
 
 | 检查项 | 典型报错 |
 |---|---|
 | 9. ViewBuilder 里的 Void 语句 | `type '()' cannot conform to 'View'` |
 | 10. Swift 保留字当标识符 | `'case' label can only appear inside a 'switch' statement` |
 | 11. **解析器逻辑自测** | 跨零点算成负数、多值取错、无单位归错类 |
+| 12. **Intent 字面量参数** | `cannot convert value of type 'String' to expected argument type 'IntentDialog'` |
 
-第 9、10 条都做过**反向验证**（故意写一段坏代码，确认校验器能精准定位到那一行），
+第 9、10、12 条都做过**反向验证**（故意写一段坏代码，确认校验器能精准定位到那一行），
 避免「规则本身是坏的」这种更隐蔽的问题。
+
+第 12 条查的是 `.result(dialog:)` 的参数 —— `IntentDialog` 只认字符串字面量，
+写成 `"a" + b` 类型就变了，编译期才炸。这条就是踩过一次之后补上的。
 
 第 11 条跑的是 `Scripts/parser-selftest.ps1` —— 一份与 Swift 解析器等价的
 逻辑镜像（PowerShell），18 条断言覆盖最容易悄悄算错的地方（含 2 条合并规则、
@@ -332,7 +336,7 @@ fitstate/
 ├── Scripts/
 │   ├── apple-portal.rb               # 门户直开能力 + 申请证书与描述文件
 │   ├── sign-ipa.sh                   # 用自有证书 + 描述文件正签
-│   ├── validate.ps1                  # 静态校验（11 项，含 Swift 编译期错误预检）
+│   ├── validate.ps1                  # 静态校验（12 项，含 Swift 编译期错误预检）
 │   └── parser-selftest.ps1           # 解析器 + 合并规则 + 文本参数防护逻辑自测（18 条断言，无 Mac 也能跑）
 ├── Sources/
 │   ├── Shared/                       # 主 App 与小组件共用

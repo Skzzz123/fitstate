@@ -368,6 +368,38 @@ if (Test-Path $selftest) {
   $warnings.Add("找不到 Scripts\parser-selftest.ps1，跳过解析器自测")
 }
 
+# ---------------------------------------------------------------- 12. Intent 字面量参数
+#
+# App Intents 的 `.result(dialog:)` 要的是 `IntentDialog`，
+# 而 `IntentDialog` 只认**字符串字面量**（靠 ExpressibleByStringInterpolation）。
+# 一旦写成 `"a" + b`，类型就变成 String 了，编译直接报
+# "cannot convert value of type 'String' to expected argument type 'IntentDialog'"。
+#
+# 这类错误只有 Xcode 才查得出来，而 CI 一轮好几分钟 —— 所以本地先拦。
+Write-Output "`n=== 12. Intent 字面量参数检查 ==="
+$aiHits = 0
+foreach ($f in $swift) {
+  $lines = Get-Content $f.FullName -Encoding UTF8
+  for ($i = 0; $i -lt $lines.Count; $i++) {
+    $code = [regex]::Replace($lines[$i], '(?m)//.*$', '')
+    foreach ($m in [regex]::Matches($code, '\.result\(\s*dialog\s*:\s*(.+?)\)\s*$')) {
+      $arg = $m.Groups[1].Value.Trim()
+      if (-not $arg.StartsWith('"')) {
+        $errors.Add("IntentDialog 只能由字符串字面量构造（$($f.Name) 第 $($i+1) 行）：$arg")
+        $aiHits++
+        continue
+      }
+      # 把字面量抠掉之后还剩 + 拼接 → 说明已经不是字面量了
+      $rest = [regex]::Replace($arg, '"(?:\\.|[^"\\])*"', '""')
+      if ($rest.Contains('+')) {
+        $errors.Add("IntentDialog 参数用了 + 拼接（$($f.Name) 第 $($i+1) 行）：请改成字符串插值写法")
+        $aiHits++
+      }
+    }
+  }
+}
+Info "Intent 字面量参数检查完毕（命中 $aiHits 处）"
+
 # ---------------------------------------------------------------- 汇总
 Write-Output "`n================ 结果 ================"
 if ($errors.Count -eq 0) {
