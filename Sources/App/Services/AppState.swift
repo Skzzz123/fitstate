@@ -51,6 +51,9 @@ final class AppState: ObservableObject {
 
     @Published var errorMessage: String?
 
+    /// 上一次刷新还没跑完时又来了一次刷新请求 → 跑完补一次
+    private var needsRefresh = false
+
     @Published var settings: AppSettings = .default {
         didSet { settings.save() }
     }
@@ -120,9 +123,21 @@ final class AppState: ObservableObject {
 
     /// 重新读取健康数据、重算基线与分数、刷新小组件。
     func refresh() async {
-        guard !isLoading else { return }
+        // 已经在刷新中就记一笔「待刷新」，等这次跑完再补一次。
+        // 不然「回到前台时正好有一次刷新在飞」的场景会把这次刷新直接丢掉，
+        // 界面就一直停在旧数据上 —— 看起来就像「快捷指令写不进去」。
+        if isLoading {
+            needsRefresh = true
+            return
+        }
         isLoading = true
-        defer { isLoading = false }
+        defer {
+            isLoading = false
+            if needsRefresh {
+                needsRefresh = false
+                Task { await self.refresh() }
+            }
+        }
 
         do {
             let fetchDays = min(90, settings.baselineWindowDays + 30)
