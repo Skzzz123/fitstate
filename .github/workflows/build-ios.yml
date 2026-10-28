@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
     inputs:
       sign_mode:
-        description: '签名模式：adhoc（免费档，仅验证 UI）/ portal（免费档 + 门户直开能力，正签）/ apple（ADP 正规签名）'
+        description: '签名模式：adhoc（免费档，仅验证 UI）/ portal（脚本直连门户，正签）/ manual（门户手动下载材料后正签）/ apple（ADP 正规签名）'
         required: false
         default: 'adhoc'
       app_group_id:
@@ -131,6 +131,55 @@ jobs:
           ruby Scripts/apple-portal.rb 2>&1 | tee build/portal/portal.log
           echo "### 门户操作日志结束"
           cat build/portal/manifest.json
+
+      # ---------------------------------------------------------------------
+      # manual 模式：签名材料由人工在门户里下载，打包成 secret 传进来
+      #
+      # 适用于「你自己在浏览器里登录门户点几下」的场景：
+      #   1. make-csr.ps1 生成 key.pem + request.csr
+      #   2. 门户上传 request.csr，下载 portal.cer
+      #   3. 门户下载两份 .mobileprovision
+      #   4. pack-sign-material.ps1 打包 → 存进 secret SIGN_MATERIAL_B64
+      # 本步骤只负责解包、自检、合成 p12，剩下的交给 sign-ipa.sh。
+      # ---------------------------------------------------------------------
+      - name: Prepare signing material (manual mode)
+        if: env.SIGN_MODE == 'manual'
+        env:
+          SIGN_MATERIAL_B64: ${{ secrets.SIGN_MATERIAL_B64 }}
+        run: |
+          set -euo pipefail
+          if [ -z "${SIGN_MATERIAL_B64:-}" ]; then
+            echo "::error::缺少仓库 secret：SIGN_MATERIAL_B64"
+            echo "::error::它由 tools\\pack-sign-material.ps1 生成（把门户手动下载的材料打包）"
+            exit 1
+          fi
+          mkdir -p build/portal
+          printf '%s' "$SIGN_MATERIAL_B64" | base64 --decode > build/portal/material.zip
+          unzip -o -q build/portal/material.zip -d build/portal
+          rm -f build/portal/material.zip
+          echo "### 解包结果："
+          ls -l build/portal
+
+          # 私钥自检：PKCS#1 结构对不对
+          openssl rsa -in build/portal/key.pem -check -noout
+          # 证书自检
+          openssl x509 -in build/portal/portal.pem -noout -subject -issuer -dates
+
+          # 描述文件里必须真的有 HealthKit，否则装上去必崩
+          for f in build/portal/*.mobileprovision; do
+            echo "--- $f 的 entitlements ---"
+            security cms -D -i "$f" > build/portal/_dec.plist || true
+            /usr/libexec/PlistBuddy -c "Print :Entitlements" build/portal/_dec.plist || true
+          done
+
+          # 合成 p12（sign-ipa.sh 期望 build/portal/portal.p12，密码固定 fitstate）
+          openssl pkcs12 -export \
+            -inkey build/portal/key.pem \
+            -in build/portal/portal.pem \
+            -out build/portal/portal.p12 \
+            -passout pass:fitstate \
+            -name "Apple Development"
+          echo "### p12 完成：$(stat -f%z build/portal/portal.p12) 字节"
 
       # ---------------------------------------------------------------------
       # apple 模式：准备 App Store Connect API Key
@@ -405,7 +454,7 @@ jobs:
       # portal 模式：用我们自己申请的证书 + 描述文件正签
       # ---------------------------------------------------------------------
       - name: Sign with our own certificate and profile
-        if: env.SIGN_MODE == 'portal'
+        if: env.SIGN_MODE == 'portal' || env.SIGN_MODE == 'manual'
         run: |
           set -euo pipefail
           bash Scripts/sign-ipa.sh 2>&1 | tee build/sign.log
@@ -448,7 +497,7 @@ jobs:
               echo "下载 FitState-ipa 制品里的 FitState.ipa。"
               echo "这是 Apple 正签的包，**不要**再用 Sideloadly 装（它会重签并抹掉能力），"
               echo "请用 Apple Configurator 2 / Apple Devices / iMazing 安装。"
-            elif [ "$SIGN_MODE" = "portal" ]; then
+            elif [ "$SIGN_MODE" = "portal" ] || [ "$SIGN_MODE" = "manual" ]; then
               echo "下载 FitState-ipa 制品里的 FitState.ipa。"
               echo "这是用免费个人团队在门户直开 HealthKit / App Groups 后自己签的包，"
               echo "**不要**再用 Sideloadly 装（它会重签并抹掉能力），"

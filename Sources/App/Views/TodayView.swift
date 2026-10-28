@@ -13,6 +13,10 @@ struct TodayView: View {
                     permissionCard
                 }
 
+                if app.authorization == .notSupported {
+                    shortcutCard
+                }
+
                 scoreCard
 
                 if let breakdown = app.breakdown {
@@ -76,6 +80,38 @@ struct TodayView: View {
                 Task { await app.requestAuthorization() }
             } label: {
                 Text("去授权")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 11)
+                    .background(Theme.primary)
+                    .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
+            }
+            .buttonStyle(.plain)
+        }
+        .cardStyle()
+    }
+
+    // MARK: - 快捷指令引导
+
+    /// 免费账号拿不到 HealthKit 能力时的引导：改用「快捷指令」喂数据。
+    private var shortcutCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                Image(systemName: "wand.and.stars")
+                    .foregroundStyle(Theme.primary)
+                Text("用「快捷指令」把数据喂进来")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(Theme.ink)
+            }
+            Text("这个安装包没有 HealthKit 能力（免费账号限制），App 自己读不了「健康」。用「快捷指令」的「查找健康记录」取到数，再调用 App 的「记录今日健康数据」动作，数据就会进来，分数、建议、趋势照常算。详细步骤在「设置」页。")
+                .font(.system(size: 13))
+                .foregroundStyle(Theme.body)
+                .fixedSize(horizontal: false, vertical: true)
+            Button {
+                Task { await app.refresh() }
+            } label: {
+                Text("重新读取")
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundStyle(.white)
                     .frame(maxWidth: .infinity)

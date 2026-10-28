@@ -20,6 +20,8 @@ enum AuthorizationState: Equatable {
     case shouldRequest
     case unknown
     case denied
+    /// 这个安装包根本没有 HealthKit 能力（免费账号），只能靠「快捷指令」喂数据
+    case notSupported
 
     var label: String {
         switch self {
@@ -27,6 +29,7 @@ enum AuthorizationState: Equatable {
         case .shouldRequest: return "需要授权"
         case .unknown: return "已授权"
         case .denied: return "权限不足"
+        case .notSupported: return "未启用能力"
         }
     }
 }

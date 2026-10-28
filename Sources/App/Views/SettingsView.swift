@@ -10,6 +10,7 @@ struct SettingsView: View {
         ScrollView {
             VStack(spacing: 16) {
                 permissionSection
+                shortcutSection
                 goalSection
                 baselineSection
                 dataSection
@@ -50,10 +51,27 @@ struct SettingsView: View {
                     .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
             }
 
+            HStack {
+                Text("数据来源")
+                    .font(.system(size: 14))
+                    .foregroundStyle(Theme.body)
+                Spacer()
+                Text(app.dataSource.label)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(app.dataSource == .none ? Theme.muted : Theme.primary)
+            }
+
             Text("读取项：睡眠分析（含分期）、HRV (SDNN)、静息心率、训练记录。")
                 .font(.system(size: 12.5))
                 .foregroundStyle(Theme.muted)
                 .fixedSize(horizontal: false, vertical: true)
+
+            if app.authorization == .notSupported {
+                Text(HealthKitAvailability.reasonText)
+                    .font(.system(size: 12.5))
+                    .foregroundStyle(Theme.warn)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
 
             if app.usingImportedData {
                 Text("当前显示的是 CSV 导入的数据，不是「健康」App 里的数据。")
@@ -63,18 +81,20 @@ struct SettingsView: View {
             }
 
             HStack(spacing: 10) {
-                Button {
-                    Task { await app.requestAuthorization() }
-                } label: {
-                    Text("重新授权")
-                        .font(.system(size: 13.5, weight: .medium))
-                        .foregroundStyle(Theme.primary)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 10)
-                        .background(Theme.primary.opacity(0.10))
-                        .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
+                if app.authorization != .notSupported {
+                    Button {
+                        Task { await app.requestAuthorization() }
+                    } label: {
+                        Text("重新授权")
+                            .font(.system(size: 13.5, weight: .medium))
+                            .foregroundStyle(Theme.primary)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 10)
+                            .background(Theme.primary.opacity(0.10))
+                            .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
+                    }
+                    .buttonStyle(.plain)
                 }
-                .buttonStyle(.plain)
 
                 Button {
                     if let url = URL(string: UIApplication.openSettingsURLString) {
@@ -93,6 +113,69 @@ struct SettingsView: View {
             }
         }
         .cardStyle()
+    }
+
+    // MARK: - 快捷指令
+
+    private var shortcutSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            SectionTitle(title: "快捷指令喂数据", subtitle: "不需要 HealthKit 能力，0 元就能用")
+
+            HStack {
+                Text("已记录")
+                    .font(.system(size: 14))
+                    .foregroundStyle(Theme.body)
+                Spacer()
+                Text(app.manualDays > 0 ? "\(app.manualDays) 天" : "还没有数据")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(app.manualDays > 0 ? Theme.primary : Theme.muted)
+            }
+
+            Text("① 打开「快捷指令」→ 新建 → 搜索「查找健康记录」→ 选「心率变异性 (SDNN)」\n② 再加一个「查找健康记录」→ 选「静息心率」\n③ 再加一个「查找健康记录」→ 选「睡眠分析」\n④ 加一个「运行 App」动作 → 选 FitState 的「记录今日健康数据」，把上面三个值填进去\n⑤ 顶部点「自动化」→ 新建 → 时间「每天早上 7:00」→ 依次选刚才的动作")
+                .font(.system(size: 12.5))
+                .foregroundStyle(Theme.body)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Text("跑完之后回到这个 App，下拉刷新就能看到分数。数据只写在这台 iPhone 里。")
+                .font(.system(size: 12.5))
+                .foregroundStyle(Theme.muted)
+                .fixedSize(horizontal: false, vertical: true)
+
+            HStack(spacing: 10) {
+                Button {
+                    Task { await app.refresh() }
+                } label: {
+                    Text("重新读取")
+                        .font(.system(size: 13.5, weight: .medium))
+                        .foregroundStyle(Theme.primary)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 10)
+                        .background(Theme.primary.opacity(0.10))
+                        .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
+                }
+                .buttonStyle(.plain)
+
+                Button {
+                    UIPasteboard.general.string = shortcutTemplate
+                    app.errorMessage = "模板已复制到剪贴板"
+                } label: {
+                    Text("复制模板")
+                        .font(.system(size: 13.5, weight: .medium))
+                        .foregroundStyle(Theme.muted)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 10)
+                        .background(Theme.hairline)
+                        .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .cardStyle()
+    }
+
+    /// 给「用一行文本记录健康数据」这个 App Intent 用的模板。
+    private var shortcutTemplate: String {
+        "48,54,452,86,121,500"
     }
 
     // MARK: - 目标睡眠

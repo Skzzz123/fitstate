@@ -1,5 +1,23 @@
+import Combine
 import Foundation
 import WidgetKit
+
+/// 当前数据来自哪里。
+enum DataSource: String {
+    case none
+    case healthKit
+    case shortcut
+    case csv
+
+    var label: String {
+        switch self {
+        case .none: return "暂无数据"
+        case .healthKit: return "「健康」App"
+        case .shortcut: return "快捷指令"
+        case .csv: return "CSV 导入"
+        }
+    }
+}
 
 /// App 的单一数据源。
 @MainActor
@@ -19,8 +37,12 @@ final class AppState: ObservableObject {
     @Published private(set) var lastUpdated: Date?
     /// 备用数据源（Documents 里的 CSV）里有多少天数据
     @Published private(set) var importedDays = 0
+    /// 「快捷指令 → App Intent」写进来的数据有多少天
+    @Published private(set) var manualDays = 0
     /// 当前数据是不是靠 CSV 兜底撑着的
     @Published private(set) var usingImportedData = false
+    /// 当前实际用的数据来源
+    @Published private(set) var dataSource: DataSource = .none
 
     @Published var errorMessage: String?
 
@@ -29,6 +51,7 @@ final class AppState: ObservableObject {
     }
 
     private let health = HealthKitService.shared
+    private var cancellables = Set<AnyCancellable>()
 
     // MARK: - 派生数据
 
@@ -55,18 +78,39 @@ final class AppState: ObservableObject {
 
     func bootstrap() async {
         settings = settings.load()
-        authorization = await health.authorizationState()
+        observeManualDataChanges()
+        authorization = await currentAuthorizationState()
         await refresh()
     }
 
     func requestAuthorization() async {
+        guard HealthKitAvailability.isEnabled else {
+            errorMessage = HealthKitAvailability.reasonText
+            return
+        }
         do {
             try await health.requestAuthorization()
-            authorization = await health.authorizationState()
+            authorization = await currentAuthorizationState()
             await refresh()
         } catch {
             errorMessage = error.localizedDescription
         }
+    }
+
+    /// 快捷指令写完数据后会广播一条通知，这里收到就重算一次。
+    private func observeManualDataChanges() {
+        NotificationCenter.default.publisher(for: .fitStateManualDataChanged)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                Task { @MainActor in await self?.refresh() }
+            }
+            .store(in: &cancellables)
+    }
+
+    /// 没有 HealthKit 能力时不要去碰 HealthKit —— 缺 entitlement 会被系统直接杀掉。
+    private func currentAuthorizationState() async -> AuthorizationState {
+        guard HealthKitAvailability.isEnabled else { return .notSupported }
+        return await health.authorizationState()
     }
 
     /// 重新读取健康数据、重算基线与分数、刷新小组件。
@@ -78,36 +122,57 @@ final class AppState: ObservableObject {
         do {
             let fetchDays = min(90, settings.baselineWindowDays + 30)
 
-            // 备用数据源：Documents 目录里的 CSV。
-            // 万一 HealthKit 授权拿不到，它能撑住同样的分数与趋势。
+            // 备用数据源 A：快捷指令 → App Intent 写进来的 JSON。
+            // 免费账号拿不到 HealthKit 能力时，这是主力数据源。
+            let manual = ManualHealthStore.load()
+            manualDays = manual.count
+
+            // 备用数据源 B：Documents 目录里的 CSV。
             let imported = ImportedHealthStore.load()
             importedDays = imported.count
 
             var fetched: [DailyMetrics] = []
             var healthError: Error?
-            do {
-                fetched = try await health.fetchDailyMetrics(days: fetchDays)
-            } catch {
-                healthError = error
+            if HealthKitAvailability.isEnabled {
+                do {
+                    fetched = try await health.fetchDailyMetrics(days: fetchDays)
+                } catch {
+                    healthError = error
+                }
             }
 
             if let healthError {
-                // 有 CSV 兜底时不算出错，只是数据来自文件
-                errorMessage = imported.isEmpty ? healthError.localizedDescription : nil
+                // 有兜底数据时不算出错，只是数据来自文件
+                errorMessage = (manual.isEmpty && imported.isEmpty) ? healthError.localizedDescription : nil
             }
 
-            // 合并：HealthKit 有的日子以它为准，缺的日子用 CSV 补上
+            // 合并优先级：HealthKit > 快捷指令 > CSV
             let healthCount = fetched.count
-            if !imported.isEmpty {
-                let existing = Set(fetched.map { $0.dayKey })
-                fetched.append(contentsOf: imported.filter { !existing.contains($0.dayKey) })
-                fetched.sort { $0.dayKey < $1.dayKey }
+            var merged = fetched
+            if !manual.isEmpty {
+                let existing = Set(merged.map { $0.dayKey })
+                merged.append(contentsOf: manual.filter { !existing.contains($0.dayKey) })
             }
-            usingImportedData = healthCount == 0 && !imported.isEmpty
+            if !imported.isEmpty {
+                let existing = Set(merged.map { $0.dayKey })
+                merged.append(contentsOf: imported.filter { !existing.contains($0.dayKey) })
+            }
+            merged.sort { $0.dayKey < $1.dayKey }
 
-            metrics = fetched
+            usingImportedData = healthCount == 0 && manual.isEmpty && !imported.isEmpty
+            if healthCount > 0 {
+                dataSource = .healthKit
+            } else if !manual.isEmpty {
+                dataSource = .shortcut
+            } else if !imported.isEmpty {
+                dataSource = .csv
+            } else {
+                dataSource = .none
+            }
 
-            authorization = await health.authorizationState()
+            metrics = merged
+
+            authorization = await currentAuthorizationState()
 
             guard let today = metrics.last else {
                 breakdown = nil

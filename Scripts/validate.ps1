@@ -86,17 +86,31 @@ foreach ($kind in @('app','widget')) {
 # ---------------------------------------------------------------- 3b. 重载签名等价检查
 Write-Output "`n=== 3b. 重载签名等价检查（typealias 重复声明） ==="
 $funcRe = '(?m)^\s*(?:public\s+|internal\s+|private\s+|fileprivate\s+|static\s+|class\s+|final\s+|mutating\s+|nonmutating\s+|override\s+|convenience\s+|required\s+|weak\s+|lazy\s+)*func\s+([A-Za-z_]\w*)\s*(\([^)]*\))'
+$ownerRe = '(?m)^\s*(?:public\s+|internal\s+|private\s+|fileprivate\s+|final\s+)*(?:struct|class|enum|actor|extension|protocol)\s+([A-Za-z_]\w*)'
 foreach ($f in $swift) {
   $text = Get-Content $f.FullName -Raw -Encoding UTF8
-  $byName = @{}
+
+  # 同一个类型里的同名同参函数才是真的重复声明（typealias 陷阱）。
+  # 不同类型里各有一个 perform() 是完全合法的，所以必须按「所属类型」分组。
+  $owners = @()
+  foreach ($m in [regex]::Matches($text, $ownerRe)) {
+    $owners += [pscustomobject]@{ Index = $m.Index; Name = $m.Groups[1].Value }
+  }
+
+  $byKey = @{}
   foreach ($m in [regex]::Matches($text, $funcRe)) {
+    $owner = '<文件级>'
+    foreach ($o in $owners) {
+      if ($o.Index -lt $m.Index) { $owner = $o.Name } else { break }
+    }
     $name = $m.Groups[1].Value
     $params = ($m.Groups[2].Value -replace '\s+', '')
-    if (-not $byName.ContainsKey($name)) { $byName[$name] = @() }
-    $byName[$name] += $params
+    $key = "$owner|$name"
+    if (-not $byKey.ContainsKey($key)) { $byKey[$key] = @() }
+    $byKey[$key] += $params
   }
-  foreach ($name in $byName.Keys) {
-    $list = $byName[$name]
+  foreach ($key in $byKey.Keys) {
+    $list = $byKey[$key]
     if ($list.Count -lt 2) { continue }
     for ($i = 0; $i -lt $list.Count; $i++) {
       for ($j = $i + 1; $j -lt $list.Count; $j++) {
